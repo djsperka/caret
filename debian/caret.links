@@ -1,4 +1,6 @@
 /usr/lib/caret/bin/caret_app_wrapper /usr/bin/caret5
+/usr/lib/caret/bin/caret_app_wrapper /usr/bin/caret5-splash
+/usr/lib/caret/bin/caret_app_wrapper /usr/bin/splash
 /usr/lib/caret/bin/caret_app_wrapper /usr/bin/caret_command
 /usr/lib/caret/bin/caret_app_wrapper /usr/bin/wb_import
 /usr/lib/caret/bin /usr/share/caret/bin

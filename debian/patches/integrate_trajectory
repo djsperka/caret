@@ -1,0 +1,3873 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -28,6 +28,13 @@
+ 
+ #=================================================================================
+ #
++# Add folder for cmake modules
++#
++set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/CMakeScripts/")
++
++
++#=================================================================================
++#
+ #
+ #
+ #message(INFORMATION "\nTo get the correct version of QT, qmake must be in the PATH\n")
+@@ -280,6 +287,16 @@
+    MESSAGE(FATAL_ERROR "OpenGL Libraries were not found")
+ ENDIF (OPENGL_FOUND)
+ 
++#=================================================================================
++#
++# Need libann - will fail on windows as I've written it. linux only now.
++#
++FIND_PACKAGE(LibANN REQUIRED)
++if (LIBANN_FOUND)
++	INCLUDE_DIRECTORIES(${LIBANN_INCLUDE_DIR})
++endif (LIBANN_FOUND)
++
++
+ 
+ 
+ #=================================================================================
+--- /dev/null
++++ b/CMakeScripts/FindLibANN.cmake
+@@ -0,0 +1,20 @@
++# - Try to find libann
++# Once done this will define
++#  LIBANN_FOUND - System has libann
++#  LIBANN_INCLUDE_DIRS - The libann include directories
++#  LIBANN_LIBRARIES - The libraries needed to use libann
++
++find_path(LIBANN_INCLUDE_DIR ANN/ANN.h
++          HINTS ENV ANN_INCLUDE_DIR)
++
++find_library(LIBANN_LIBRARY NAMES ann
++             HINTS ENV ANN_LIB_DIR )
++
++include(FindPackageHandleStandardArgs)
++# handle the QUIETLY and REQUIRED arguments and set LIBXML2_FOUND to TRUE
++# if all listed variables are TRUE
++find_package_handle_standard_args(LibAnn DEFAULT_MSG LIBANN_LIBRARY LIBANN_INCLUDE_DIR)
++
++mark_as_advanced(LIBANN_INCLUDE_DIR LIBANN_LIBRARY )
++set(LIBANN_INCLUDE_DIRS ${LIBANN_INCLUDE_DIR})
++set(LIBANN_LIBRARIES ${LIBANN_LIBRARY})
+--- a/caret5/CMakeLists.txt
++++ b/caret5/CMakeLists.txt
+@@ -74,6 +74,7 @@
+    ${MINC_LIBRARY}
+    ${NETCDF_LIBRARY}
+    ${ZLIB_LIBRARIES}
++   ${LIBANN_LIBRARIES}
+ )
+ 
+ IF(WIN32)
+--- a/caret5/main.cxx
++++ b/caret5/main.cxx
+@@ -420,7 +420,7 @@
+    typeMap[SpecFile::getTextFileExtension()] = "Text";
+    typeMap[SpecFile::getNeurolucidaFileExtension()] = "Neurolucida";
+    typeMap[SpecFile::getCaretScriptFileExtension()] = "Caret Script";
+-   
++   typeMap[SpecFile::getTrajectoryFileExtension()] = "Electrode trajectory";
+    WuQFileDialog::setFileExtensionToTypeNameMap(typeMap);
+ }
+ 
+--- a/caret_brain_set/BrainModelOpenGL.cxx
++++ b/caret_brain_set/BrainModelOpenGL.cxx
+@@ -85,6 +85,7 @@
+ #include "SurfaceShapeFile.h"
+ #include "VectorFile.h"
+ #include "TopologyHelper.h"
++#include "TrajectoryFile.h"
+ #include "TransformationMatrixFile.h"
+ #include "VtkModelFile.h"
+ 
+@@ -92,6 +93,12 @@
+ #include "vtkTransform.h"
+ #include "vtkTriangle.h"
+ 
++// These are utility functions to help generate cylinder points
++void generateCircle(double center[3], double r, int N, double *pts, double *norms, bool bOutward);
++void intersectLinePlane(double p0[3], double n[3], double p1[3], double p2[3], double p[3]);
++void dumpvec2(std::string s, double f[3]);
++
++
+ /* Number of slices used in Cylinder,Disk,Cone quadrics */
+ static const int QUADRIC_NUMBER_OF_SLICES = 4;
+ 
+@@ -1592,9 +1599,12 @@
+    }
+ 
+    drawBorders(bms);
+-   
++
++   // djs draw electrode trajectory...
++   drawElectrodeTrajectory(bms);
++
+    //drawCellAndFociProjections(bms);
+-   
++
+    drawCuts();
+    
+    drawGeodesicPath(cf);
+@@ -3047,6 +3057,10 @@
+    // Draw the identify symbols
+    //
+    drawVolumeIdentifySymbols(volumeSliceAxis, volumeSliceCoordinate);
++
++   /// djs draw nodes found within electrode trajectory cylinder
++   ///
++   drawVolumeElectrodeTrajectory(bmv, volumeSliceAxis, volumeSliceCoordinate);
+ }
+ 
+ /**
+@@ -8913,6 +8927,491 @@
+    }
+ }
+ 
++
++/**
++ * Draw the skull surface and electrode trajectory
++ */
++void
++BrainModelOpenGL::drawElectrodeTrajectory(BrainModelSurface* s)
++{
++	double matrix[16];
++	double T[3][3];
++	const int nsides = 20;
++	double vtemp[3];
++	ANNidxArray idx;
++	int nidx;
++	double xc[3], yc[3], zc[3], zrest;
++	double dCenter[3];
++	double dTarget[3];
++	double dEntry[3];
++	double dID, dOD, dH;
++	double gridx, gridy;
++	double dPlanePt[3], dPlaneNormal[3], dPlaneNormalRot[3];
++	TrajectoryFile *ptf = s->getBrainSet()->getTrajectoryFile();
++	ElectrodeTrajectoryP ep = ptf->getActiveTrajectory();
++
++	if (!ep) return;
++
++	const int brainModelIndex = brainSet->getBrainModelIndex(s);
++	if (brainModelIndex < 0)
++	{
++		std::cout << "PROGRAM ERROR: invalid brain model index at " << __LINE__
++				<< " in " << __FILE__ << std::endl;
++		return;
++	}
++
++  	// Only draw skull surface if selection mask is off
++  	if (selectionMask == SELECTION_MASK_OFF)
++  	{
++		if (s->getSurfaceType() == BrainModelSurface::SURFACE_TYPE_FIDUCIAL)
++		{
++			double xyz[3];
++			int i;
++
++			if (ep->getDisplaySkull())
++			{
++				const std::multimap<int, int>& mapFaces = ptf->getSkullFaceMap();
++				std::set<int> uniqueFaces;
++				std::set<int> uniqueFacesAnnulus;
++
++				// Find faces present in the nearby list of vertices
++				ep->getSkullNearbyIdx(&idx, &nidx);
++				if (nidx > 0)
++				{
++					for (i=0; i<nidx; i++)
++					{
++						std::pair< std::map<int, int>::const_iterator, std::map<int, int>::const_iterator > p;
++						p = mapFaces.equal_range(idx[i]);
++						for ( std::map<int, int>::const_iterator it = p.first; it!= p.second; it++)
++						{
++							uniqueFaces.insert(it->second);
++						}
++					}
++				}
++
++				// Now get faces present in the annulus list of indices, but which are NOT in the nearby list.
++				ep->getSkullAnnulusIdx(&idx, &nidx);
++				if (nidx > 0)
++				{
++					for (i=0; i<nidx; i++)
++					{
++						std::pair< std::map<int, int>::const_iterator, std::map<int, int>::const_iterator > p;
++						p = mapFaces.equal_range(idx[i]);
++						for ( std::map<int, int>::const_iterator it = p.first; it!= p.second; it++)
++						{
++							// Only add the face to the annulus list if its NOT in the other list
++							if (uniqueFaces.find(it->second) == uniqueFaces.end())
++							{
++								uniqueFacesAnnulus.insert(it->second);
++							}
++						}
++					}
++				}
++
++				// Now draw
++
++				float fv1[3], fv2[3], fv3[3];
++				float fn1[3], fn2[3], fn3[3];
++
++				glEnable(GL_LIGHTING);
++				glEnable(GL_COLOR_MATERIAL);
++				glColor3ub(ep->getSkullSurfaceColor().red(), ep->getSkullSurfaceColor().green(), ep->getSkullSurfaceColor().blue());
++				glBegin(GL_TRIANGLES);
++				for (std::set<int>::iterator it=uniqueFaces.begin(); it != uniqueFaces.end(); it++)
++				{
++					ptf->getFace(*it, fv1, fv2, fv3, fn1, fn2, fn3);
++					glVertex3fv(fv1);
++					glNormal3fv(fn1);
++					glVertex3fv(fv2);
++					glNormal3fv(fn2);
++					glVertex3fv(fv3);
++					glNormal3fv(fn3);
++				}
++				glEnd();
++
++				glColor3ub(ep->getSkullSurfaceAnnulusColor().red(), ep->getSkullSurfaceAnnulusColor().green(), ep->getSkullSurfaceAnnulusColor().blue());
++				glBegin(GL_TRIANGLES);
++				for (std::set<int>::iterator it=uniqueFacesAnnulus.begin(); it != uniqueFacesAnnulus.end(); it++)
++				{
++					ptf->getFace(*it, fv1, fv2, fv3, fn1, fn2, fn3);
++					glVertex3fv(fv1);
++					glNormal3fv(fn1);
++					glVertex3fv(fv2);
++					glNormal3fv(fn2);
++					glVertex3fv(fv3);
++					glNormal3fv(fn3);
++				}
++				glEnd();
++
++				glDisable(GL_LIGHTING);
++				glDisable(GL_COLOR_MATERIAL);
++			}
++
++			ep->getCylinderCoords(xc, yc, zc, &zrest);
++			ep->getCylinderCenter(dCenter);
++			ep->getEntry(dEntry);
++			ep->getTarget(dTarget);
++			ep->getGridEntry(&gridx, &gridy);
++			ep->getCylinderFitValues(dPlanePt, dPlaneNormal);		// plane normal in world coord
++			dID = ep->getCylinderID();
++			dOD = ep->getCylinderOD();
++			dH = ep->getCylinderH();
++
++			// Set up a transformation matrix and rotate cylinder fit plane normal
++			for (i=0; i<3; i++)
++			{
++				T[0][i] = xc[i];
++				T[1][i] = yc[i];
++				T[2][i] = zc[i];
++			}
++			vtkMath::Multiply3x3(T, dPlaneNormal, dPlaneNormalRot);
++			// Set up the modelview matrix.
++			// Cylinder coords become the rotation matrix.
++			// Cylinder center becomes the translation center.
++
++			matrix[0] = xc[0]; matrix[1] = xc[1]; matrix[2] = xc[2]; matrix[3] = 0;
++			matrix[4] = yc[0]; matrix[5] = yc[1]; matrix[6] = yc[2]; matrix[7] = 0;
++			matrix[8] = zc[0]; matrix[9] = zc[1]; matrix[10] = zc[2]; matrix[11] = 0;
++			matrix[12] = dCenter[0]; matrix[13] = dCenter[1]; matrix[14] = dCenter[2]; matrix[15] = 1;
++
++			// display cylinder
++			if (ep->getDisplayCylinder())
++			{
++				// Generate points for the top and bottom of cylinder
++				double dTopInner[nsides*3], dTopInnerNorms[nsides*3];
++				double dTopOuter[nsides*3], dTopOuterNorms[nsides*3];
++				double dBotInner[nsides*3], dBotInnerNorms[nsides*3];
++				double dBotOuter[nsides*3], dBotOuterNorms[nsides*3];
++				double dRestInner[nsides*3];
++				double dRestOuter[nsides*3];
++//djs 12-22-08	liftoff	problem		float center[3] = { 0, 0, zrest+fH };
++				double center[3] = { 0, 0, dH };
++				double p0[3];
++				generateCircle(center, dID/2, nsides, dTopInner, dTopInnerNorms, false);
++				generateCircle(center, dOD/2, nsides, dTopOuter, dTopOuterNorms, true);
++				//djs 12-22-08	liftoff	problem				center[2] = zrest;
++				center[2] = 0;
++				generateCircle(center, dID/2, nsides, dBotInner, dBotInnerNorms, false);
++				generateCircle(center, dOD/2, nsides, dBotOuter, dBotOuterNorms, true);
++
++				// Now get intersections with the fit plane
++				for (i=0; i<3; i++) p0[i] = dPlanePt[i] - dCenter[i];
++				for (i=0; i<nsides; i++)
++				{
++					intersectLinePlane(p0, dPlaneNormalRot, dTopInner+i*3, dBotInner+i*3, dRestInner+i*3);
++					intersectLinePlane(p0, dPlaneNormalRot, dTopOuter+i*3, dBotOuter+i*3, dRestOuter+i*3);
++				}
++
++				// Now start drawing
++				glEnable(GL_LIGHTING);
++				glEnable(GL_COLOR_MATERIAL);
++				glPushMatrix();
++				glMultMatrixd(matrix);
++
++				// ...top
++				glColor3ub(ep->getCylinderEndsColor().red(), ep->getCylinderEndsColor().green(), ep->getCylinderEndsColor().blue());
++				glBegin(GL_QUAD_STRIP);
++				for (i=0; i<nsides; i++)
++				{
++					glVertex3dv(dTopInner+i*3);
++					glNormal3dv(dTopInnerNorms+i*3);
++					glVertex3dv(dTopOuter+i*3);
++					glNormal3dv(dTopOuterNorms+i*3);
++				}
++				glVertex3dv(dTopInner);
++				glNormal3dv(dTopInnerNorms);
++				glVertex3dv(dTopOuter);
++				glNormal3dv(dTopOuterNorms);
++				glEnd();
++
++				// ...bottom - reverse order of points
++				glColor3ub(ep->getCylinderEndsColor().red(), ep->getCylinderEndsColor().green(), ep->getCylinderEndsColor().blue());
++				glBegin(GL_QUAD_STRIP);
++				for (i=0; i<nsides; i++)
++				{
++					glVertex3dv(dRestOuter+i*3);
++					glNormal3dv(dBotOuterNorms+i*3);
++					glVertex3dv(dRestInner+i*3);
++					glNormal3dv(dBotInnerNorms+i*3);
++				}
++				glVertex3dv(dRestOuter);
++				glNormal3dv(dBotOuterNorms);
++				glVertex3dv(dRestInner);
++				glNormal3dv(dBotInnerNorms);
++				glEnd();
++
++				// ...outside
++				glColor3ub(ep->getCylinderSidesColor().red(), ep->getCylinderSidesColor().green(), ep->getCylinderSidesColor().blue());
++				glBegin(GL_QUAD_STRIP);
++				for (i=0; i<nsides; i++)
++				{
++					glVertex3dv(dTopOuter+i*3);
++					glNormal3dv(dTopOuterNorms+i*3);
++					glVertex3dv(dRestOuter+i*3);
++					glNormal3dv(dBotOuterNorms+i*3);
++				}
++				glVertex3dv(dTopOuter);
++				glNormal3dv(dTopOuterNorms);
++				glVertex3dv(dRestOuter);
++				glNormal3dv(dBotOuterNorms);
++				glEnd();
++
++				// ...inside
++				glColor3ub(ep->getCylinderSidesColor().red(), ep->getCylinderSidesColor().green(), ep->getCylinderSidesColor().blue());
++				glBegin(GL_QUAD_STRIP);
++				for (i=0; i<nsides; i++)
++				{
++					glVertex3dv(dTopInner+i*3);
++					glNormal3dv(dTopInnerNorms+i*3);
++					glVertex3dv(dRestInner+i*3);
++					glNormal3dv(dBotInnerNorms+i*3);
++				}
++				glVertex3dv(dTopInner);
++				glNormal3dv(dTopInnerNorms);
++				glVertex3dv(dRestInner);
++				glNormal3dv(dBotInnerNorms);
++				glEnd();
++
++				// symmetry axis
++				glBegin(GL_LINES);
++				glColor3ub(0, 0, 0);
++				glVertex3f(0, 0, 0);
++				glVertex3f(0, 0, 1.5*(dH + zrest));
++				glEnd();
++
++				// Disable lighting here so the crosshairs and symmetry axis don't get the
++				// lighting funkiness.
++				glDisable(GL_LIGHTING);
++				glDisable(GL_COLOR_MATERIAL);
++
++				// crosshairs that represent grid orientation. Heavier line is the "north" direction
++				// of the grid.
++				// 12-17-08 Negative sign on rotation angle is because our definition of a positive rotation of the
++				// grid is opposite that of OpenGL.
++				// 12-22-08 Draw North line as black, all others as white.
++				glRotatef(-ep->getGridRotation(), 0, 0, 1);
++				glLineWidth(1.0);
++				glColor3ub(0, 0, 0);
++				glBegin(GL_LINES);
++				glVertex3d(0, 0, dH + 0.1);
++				glVertex3d(0, 0.5*dOD, dH + 0.1);
++				glEnd();
++				glLineWidth(1.0);
++				glColor3ub(255, 255, 255);
++				glBegin(GL_LINES);
++				glVertex3d(0, 0, dH + 0.1);
++				glVertex3d(0, -0.5*dOD, dH + 0.1);
++				glVertex3d(0, 0, dH + 0.1);
++				glVertex3d(0.5*dOD, 0, dH + 0.1);
++				glVertex3d(0, 0, dH + 0.1);
++				glVertex3d(-0.5*dOD, 0, dH + 0.1);
++				glEnd();
++
++				glPopMatrix();
++			}
++
++			if (ep->getDisplayTrajectory())
++			{
++				double b[3];
++				double d;
++				double gridx, gridy;
++				double entryDepth;
++				ep->getGridEntry(&gridx, &gridy);
++				for (i=0; i<3; i++) vtemp[i] = dCenter[i] - dTarget[i];
++				entryDepth = vtkMath::Dot(vtemp, zc); // actually this is the opposite sign than we'll need.
++				d = vtkMath::Normalize(vtemp);
++				for (i=0; i<3; i++) b[i] = dTarget[i] + (d+zrest+dH)*vtemp[i];
++				glColor3ub(ep->getPathLineColor().red(), ep->getPathLineColor().green(), ep->getPathLineColor().blue());
++
++				// push the cylinder coords matrix, along with a rotation matrix for the grid rotation.
++				glPushMatrix();
++				glMultMatrixd(matrix);
++				glRotated(-ep->getGridRotation(), 0, 0, 1);
++				glBegin(GL_LINES);
++				glVertex3d(gridx, gridy, -entryDepth);
++				glVertex3d(gridx, gridy, d+zrest+dH);
++				glEnd();
++				glPopMatrix();
++			}
++
++
++			if (ep->getDisplayBrain())
++			{
++				// draw brain surface
++				glColor3ub(ptf->getBrainSurfaceColor().red(), ptf->getBrainSurfaceColor().green(), ptf->getBrainSurfaceColor().blue());
++				glPointSize(1.0);
++				glBegin(GL_POINTS);
++				for (i=0; i<ptf->getNumBrainVertices(); i++)
++				{
++					ptf->getBrainVertex(i, xyz);
++					glVertex3dv(xyz);
++				}
++				glEnd();
++			}
++		}
++		else if (s->getSurfaceType() == BrainModelSurface::SURFACE_TYPE_FLAT)
++		{
++			const std::map<double, int>& mapPathNodes = ep->getPathNodes();
++			const CoordinateFile* cf = s->getCoordinateFile();
++			double xyz[3];
++
++			if (ep->getDisplayTrajectory())
++			{
++				// Draw nodes within tolerance of path. mapPathNodes is a map of nodes indexed by depth as measured from entry point.
++				// The actual depth only matters if the depth tool is in use -- in that case compute the actual depth and find all nodes
++				// within the depth tool tolerance of that depth (depth tool tolerance is different than the path radius tolerance).
++				// If the depth tool is not in use, use all nodes. The depthMin/depthMax should be set to ridiculous values so that they will
++				// catch all nodes (when depth tool not in use).
++				if (mapPathNodes.size() > 0)
++				{
++					double ddepthMin = -999999.99;
++					double ddepthMax = 999999.99;
++
++					// check if the depth tool is on. If its checked on, then calculate min/max
++					// depth values.
++					if (ep->getUseDepthTool())
++					{
++						double ddepth = (float)ep->getDepthToolDepthPct()/100.0f * ep->getMaxPenetrationDepth();
++						double ddepthTol = ep->getDepthToolTolerance();
++						ddepthMin = ddepth - ddepthTol;
++						ddepthMax = ddepth + ddepthTol;
++					}
++					glColor3ub(ep->getFlatMapNodesColor().red(), ep->getFlatMapNodesColor().green(), ep->getFlatMapNodesColor().blue());
++					glPointSize(2.0);
++					glBegin(GL_POINTS);
++					for (std::map<double, int>::const_iterator it=mapPathNodes.begin(); it!=mapPathNodes.end(); it++)
++					{
++						int iNode = (*it).second;
++						double ddist = (*it).first;
++
++						if (ddist > ddepthMin && ddist < ddepthMax)
++						{
++							// Get coord of this node from flat file.....???????
++							cf->getCoordinate(iNode, xyz);
++							glVertex3dv(xyz);
++						}
++					}
++					glEnd();
++				}
++			}
++		}
++  	}
++	return;
++}
++
++
++
++/**
++ * Draw electrode trajectory and selected nodes on volume
++ */
++void BrainModelOpenGL::drawVolumeElectrodeTrajectory(BrainModelVolume* bmv, const VolumeFile::VOLUME_AXIS volumeSliceAxis, const float axisCoord)
++{
++	int iaxis;			// index of coordinate which is perp to screen
++	int iaxisX, iaxisY;	// indices of axes in plane of screen - used for drawing voxels
++	float dTrajectoryVolumeTolerance = 1.0;
++	float spacing[3];
++	float origin[3];
++	float voxelX, voxelY;
++	float voxelSizeX = 1.0;
++	float voxelSizeY = 1.0;
++	float voxelOriginX = 1.0;
++	float voxelOriginY = 1.0;
++	VolumeFile *vf;
++	TrajectoryFile *ptf = brainSet->getTrajectoryFile();
++	ElectrodeTrajectoryP ep = ptf->getActiveTrajectory();
++	if (!ep) return;
++
++   //
++   // Get the origin and spacing
++   //
++   vf = bmv->getUnderlayVolumeFile();
++   if (NULL == bmv) return;
++   vf->getOrigin(origin);
++   vf->getSpacing(spacing);
++
++   switch(volumeSliceAxis)
++   {
++      case VolumeFile::VOLUME_AXIS_X:  // PARASAGITTAL
++			iaxis = 0;
++			iaxisX = 1;
++			iaxisY = 2;
++         voxelSizeX = spacing[1];
++         voxelSizeY = spacing[2];
++         voxelOriginX = origin[1];
++         voxelOriginY = origin[2];
++         break;
++      case VolumeFile::VOLUME_AXIS_Y:  // CORONAL
++			iaxis = 1;
++			iaxisX = 0;
++			iaxisY = 2;
++         voxelSizeX = spacing[0];
++         voxelSizeY = spacing[2];
++         voxelOriginX = origin[0];
++         voxelOriginY = origin[2];
++         break;
++      case VolumeFile::VOLUME_AXIS_Z:  // HORIZONTAL
++			iaxis = 2;
++			iaxisX = 0;
++			iaxisY = 1;
++         voxelSizeX = spacing[0];
++         voxelSizeY = spacing[1];
++         voxelOriginX = origin[0];
++         voxelOriginY = origin[1];
++			break;
++		default:
++			std::cout << "BrainModelOpenGL::drawVolumeElectrodeTrajectory(): UNKNOWN AXIS" << std::endl;
++			break;
++   }
++
++
++	const std::map<double, int>& mapPathNodes = ep->getPathNodes();
++	const CoordinateFile* cf = brainSet->getActiveFiducialSurface()->getCoordinateFile();
++	float xyz[3];
++	if (mapPathNodes.size() > 0)
++	{
++		// TODO: Get color and size from dialog. Also LINE_LOOP or POLYGON or POINTS
++		glColor3ub(ep->getVolumeNodesColor().red(), ep->getVolumeNodesColor().green(), ep->getVolumeNodesColor().blue());
++		for (std::map<double, int>::const_iterator it=mapPathNodes.begin(); it!=mapPathNodes.end(); it++)
++		{
++			int iNode = (*it).second;
++			double dDepth = it->first;
++
++			// If depth tool in use, check depth against penetration depth. If outside
++			// tolerance skip this node
++			if (ep->getUseDepthTool())
++			{
++				if (abs(dDepth - ep->getPenetrationDepth()) > ep->getDepthToolTolerance())
++				{
++					continue;
++				}
++			}
++
++			// Get coord of this node.
++			cf->getCoordinate(iNode, xyz);
++			if (fabs(xyz[iaxis]-axisCoord) < dTrajectoryVolumeTolerance)
++			{
++				// these are the voxel numbers (0...) in the drawing-x and -y directions
++				//
++				int nvoxelX = 0;
++				int nvoxelY = 0;
++
++				nvoxelX = (int)((xyz[iaxisX]-voxelOriginX)/voxelSizeX);
++				nvoxelY = (int)((xyz[iaxisY]-voxelOriginY)/voxelSizeY);
++
++				voxelX = nvoxelX * voxelSizeX + voxelOriginX;
++				voxelY = nvoxelY * voxelSizeY + voxelOriginY;
++
++				glBegin(GL_POLYGON);
++				glVertex2f(voxelX, voxelY);
++				glVertex2f(voxelX + voxelSizeX, voxelY);
++				glVertex2f(voxelX + voxelSizeX, voxelY + voxelSizeY);
++				glVertex2f(voxelX, voxelY + voxelSizeY);
++				glEnd();
++			}
++		}
++	}
++}
++
+ /**
+  * Draw the borders.
+  */
+@@ -12932,3 +13431,58 @@
+    return pointSize;
+ }
+       
++/**
++ *	Generate a circle in xy plane.
++ */
++
++void generateCircle(double center[3], double r, int N, double *pts, double *norms, bool bOutward)
++{
++	int i, j;
++	double alpha = 2*vtkMath::Pi()/N;
++	double c, s, a;
++	for (i=0; i<N; i++)
++	{
++		j = i*3;			// index into pts and norms
++		a = i*alpha;
++		c = cos(a);
++		s = sin(a);
++
++		pts[j] = center[0] + r*c;
++		pts[j+1] = center[1] + r*s;
++		pts[j+2] = center[2];
++
++		if (bOutward)
++		{
++			norms[j] = c;
++			norms[j+1] = s;
++			norms[j+2] = 0;
++		}
++		else
++		{
++			norms[j] = -c;
++			norms[j+1] = -s;
++			norms[j+2] = 0;
++		}
++	}
++}
++
++/**
++ *	Find intersection between line and plane
++ */
++
++void intersectLinePlane(double p0[3], double n[3], double p1[3], double p2[3], double p[3])
++{
++	double a[3], b[3], da, db, t;
++	int i;
++	for (i=0; i<3; i++) a[i] = p2[i] - p1[i];
++	for (i=0; i<3; i++) b[i] = p0[i] - p1[i];
++	da = vtkMath::Dot(a, n);
++	db = vtkMath::Dot(b, n);
++	t = db/da;
++	for (i=0; i<3; i++) p[i] = p1[i] + t * a[i];
++}
++
++void dumpvec2(std::string s, double d[3])
++{
++	std::cout << s << " " << d[0] << ", " << d[1] << ", " << d[2] << std::endl;
++}
+--- a/caret_brain_set/BrainModelOpenGL.h
++++ b/caret_brain_set/BrainModelOpenGL.h
+@@ -543,6 +543,12 @@
+       /// Draw a cuts file.
+       void drawCuts();
+       
++      /// Draw electrode trajectory
++      void drawElectrodeTrajectory(BrainModelSurface* s);
++
++      /// Draw electrode trajectory and nodes on volume
++		void drawVolumeElectrodeTrajectory(BrainModelVolume* bmv, const VolumeFile::VOLUME_AXIS volumeSliceAxis, const float axisCoord);
++
+       /// Draw the borders.
+       void drawBorders(BrainModelSurface* s);
+       
+--- a/caret_brain_set/BrainSet.cxx
++++ b/caret_brain_set/BrainSet.cxx
+@@ -132,6 +132,7 @@
+ #include "RgbPaintFile.h"
+ #include "SceneFile.h"
+ #include "SectionFile.h"
++#include "TrajectoryFile.h"
+ #include "StatisticRandomNumber.h"
+ #include "StringUtilities.h"
+ #include "StudyCollectionFile.h"
+@@ -371,6 +372,7 @@
+    studyMetaDataFile      = new StudyMetaDataFile;
+    surfaceShapeFile       = new SurfaceShapeFile;
+    topographyFile         = new TopographyFile;
++   trajectoryFile         = new TrajectoryFile;
+    transformationMatrixFile = new TransformationMatrixFile;
+    vocabularyFile         = new VocabularyFile;
+    wustlRegionFile        = new WustlRegionFile;
+@@ -683,6 +685,7 @@
+    delete studyMetaDataFile;
+    delete surfaceShapeFile;
+    delete topographyFile;
++   delete trajectoryFile;
+    delete transformationMatrixFile;
+    delete vocabularyFile;
+    delete wustlRegionFile;
+@@ -5757,6 +5760,62 @@
+    }
+ }
+ 
++
++/**
++ * Read an electrode trajectory file.
++ */
++void
++BrainSet::readTrajectoryFile(const QString& name) throw (FileException)
++{
++	float xyzOrigin[3];
++	double xyzD[3];
++	// check for volume anatomy file
++	const VolumeFile* vf = getVolumeAnatomyFile(0);
++	if (NULL == vf)
++	{
++		throw FileException(name, "Cannot load trajectory file without a volume anatomy file already loaded!");
++	}
++	else
++	{
++		vf->getOrigin(xyzOrigin);
++		if (DebugControl::getDebugOn())
++		{
++			std::cout << "Volume origin is " << xyzOrigin[0] << "," << xyzOrigin[1] << "," << xyzOrigin[2] << std::endl;
++		}
++		for (int i=0; i<3; i++) xyzD[i] = xyzOrigin[i];
++		trajectoryFile->setVolumeOrigin(xyzD);
++
++		// tell trajectory file to generate the nn tree from the fiducial surface
++		const BrainModelSurface* bms = getActiveFiducialSurface();
++	   if (bms != NULL)
++	   {
++   	   const CoordinateFile* cf = bms->getCoordinateFile();
++   	   trajectoryFile->createFiducialTree(cf);
++	   }
++	   else
++	   {
++	   	std::cout << "ERROR in readTrajectoryFile - no fiducial surface!" << std::endl;
++	   }
++		trajectoryFile->readFile(name);
++
++
++	}
++
++}
++
++/**
++ * Write the electrode trajectory file.
++ */
++void
++BrainSet::writeTrajectoryFile(const QString& name) throw (FileException)
++{
++	trajectoryFile->writeFile(name);
++}
++
++
++
++
++
+ /** 
+  * Write the geodesic distance data file.
+  */ 
+@@ -8848,6 +8907,26 @@
+    }
+    
+    //
++   // Read the trajectory files
++   //
++   for (unsigned int i = 0; i < specFileIn.trajectoryFile.files.size(); i++) {
++      if (specFileIn.trajectoryFile.files[i].selected) {
++         if (updateFileReadProgressDialog(specFileIn.trajectoryFile.files[i].filename,
++                                          progressFileCounter, progressDialog)) {
++            return true;
++         }
++         try {
++            readTrajectoryFile(specFileIn.trajectoryFile.files[i].filename);
++         }
++         catch (FileException& e) {
++            errorMessages.push_back(e.whatQString());
++         }
++      }
++   }
++
++
++
++   //
+    // Read the transformation data file
+    //
+    for (unsigned int i = 0; i < specFileIn.transformationDataFile.files.size(); i++) {
+--- a/caret_brain_set/BrainSet.h
++++ b/caret_brain_set/BrainSet.h
+@@ -128,6 +128,7 @@
+ class VocabularyFile;
+ class VtkModelFile;
+ class WustlRegionFile;
++class TrajectoryFile;
+ 
+ /**
+  * Brain Set contains all Surfaces (topology and coordinates) and all
+@@ -826,7 +827,10 @@
+       
+       /// get the scene file
+       SceneFile* getSceneFile() { return sceneFile; };
+-      
++
++      /// get trajectory file
++      TrajectoryFile* getTrajectoryFile() { return trajectoryFile; };
++
+       /// get the preferences file
+       static PreferencesFile* getPreferencesFile();
+       
+@@ -1359,7 +1363,13 @@
+       
+       /// write the scene data file
+       void writeSceneFile(const QString& name) throw (FileException);
+-      
++
++      /// read an electrode trajectory file
++      void readTrajectoryFile(const QString& name) throw (FileException);
++
++      /// write an electrode trajectory file
++      void writeTrajectoryFile(const QString& name) throw (FileException);
++
+       /// read the section data file file
+       void readSectionFile(const QString& name, const bool append,
+                            const bool updateSpec) throw (FileException);
+@@ -2060,7 +2070,10 @@
+       
+       /// active unknown topology file
+       TopologyFile* topologyUnknown;
+-      
++
++      /// electrode trajectory file
++      TrajectoryFile *trajectoryFile;
++
+       /// functional volume files
+       std::vector<VolumeFile*> volumeFunctionalFiles;
+       
+--- a/caret_command/CMakeLists.txt
++++ b/caret_command/CMakeLists.txt
+@@ -73,6 +73,7 @@
+    ${MINC_LIBRARY}
+    ${NETCDF_LIBRARY}
+    ${ZLIB_LIBRARIES}
++   ${LIBANN_LIBRARIES}
+ )
+ 
+ IF(WIN32)
+--- a/caret_edit/CMakeLists.txt
++++ b/caret_edit/CMakeLists.txt
+@@ -73,6 +73,7 @@
+    ${MINC_LIBRARY}
+    ${NETCDF_LIBRARY}
+    ${ZLIB_LIBRARIES}
++   ${LIBANN_LIBRARIES}
+ )
+ 
+ IF(WIN32)
+--- a/caret_files/FileFilters.cxx
++++ b/caret_files/FileFilters.cxx
+@@ -190,6 +190,7 @@
+    allFileFiltersOut.append(getTopologyGenericFileFilter());
+    allFileFiltersOut.append(getTransformationMatrixFileFilter());
+    allFileFiltersOut.append(getTransformationDataFileFilter());
++   allFileFiltersOut.append(getTrajectoryFileFilter());
+    allFileFiltersOut.append(getVolumeAnatomyFileFilter());
+    allFileFiltersOut.append(getVolumeFunctionalFileFilter());
+    allFileFiltersOut.append(getVolumePaintFileFilter());
+--- a/caret_files/FileFilters.h
++++ b/caret_files/FileFilters.h
+@@ -239,7 +239,10 @@
+       
+       /// file filer for  file
+       static QString getTopologyGenericFileFilter() { return QString("Topology Files (*%1)").arg(SpecFile::getTopoFileExtension()); }
+-      
++
++      /// file filer for  file
++      static QString getTrajectoryFileFilter() { return QString("Electrode Trajectory Files (*%1)").arg(SpecFile::getTrajectoryFileExtension()); }
++
+       /// file filer for  file
+       static QString getTransformationMatrixFileFilter() { return QString("Transformation Matrix Files (*%1)").arg(SpecFile::getTransformationMatrixFileExtension()); }
+ 
+--- a/caret_files/SpecFile.cxx
++++ b/caret_files/SpecFile.cxx
+@@ -34,7 +34,7 @@
+ #include <QDomNode>
+ #include <QDomText>
+ #include <QFileInfo>
+-
++#include <QtDebug>
+ #include "BorderFile.h"
+ #include "CoordinateFile.h"
+ #include "FileUtilities.h"
+@@ -188,7 +188,7 @@
+    
+    studyCollectionFile.initialize("Study Collection File", getStudyCollectionFileTag(), Entry::FILE_TYPE_OTHER);
+    studyMetaDataFile.initialize("Study Metadata File", getStudyMetaDataFileTag(), Entry::FILE_TYPE_OTHER);
+-   
++   trajectoryFile.initialize("Electrode Trajectory File", getTrajectoryFileTag(), Entry::FILE_TYPE_OTHER);
+    transformationDataFile.initialize("Transformation Data File", getTransformationDataFileTag(), Entry::FILE_TYPE_SURFACE);
+    
+    vocabularyFile.initialize("Vocabulary File", getVocabularyFileTag(), Entry::FILE_TYPE_OTHER);
+@@ -360,6 +360,9 @@
+    allEntries.push_back(&vocabularyFile);
+ 
+    allEntries.push_back(&documentFile);
++
++   // djs add trajectory file type
++   allEntries.push_back(&trajectoryFile);
+ }
+       
+ /**
+@@ -530,6 +533,8 @@
+    otherTags = sf.otherTags;
+    otherTagsValues = sf.otherTagsValues;
+ 
++   trajectoryFile = sf.trajectoryFile;
++
+    updateAllEntries();
+ }
+ 
+@@ -2729,6 +2734,7 @@
+                          const Structure& structureIn) 
+ {
+    bool matches = false;
++
+    if (specFilePatternMatchFlag) {
+       if (tagReadIn.contains(specFileTag)) {
+          matches = true;
+--- a/caret_files/SpecFile.h
++++ b/caret_files/SpecFile.h
+@@ -662,6 +662,8 @@
+       
+       Entry scriptFile;
+       
++      Entry trajectoryFile;
++
+       static QString getVolumeFunctionalFileTag()   { return "volume_functional_file"; }
+       static QString getVolumePaintFileTag()        { return "volume_paint_file"; }
+       static QString getVolumeProbAtlasFileTag() { return "volume_prob_atlas_file"; }
+@@ -732,7 +734,7 @@
+       static QString getPaletteFileTag() { return "palette_file"; }
+       
+       static QString getTopographyFileTag() { return "topography_file"; }
+-      
++      static QString getTrajectoryFileTag() { return "electrode_trajectory_file"; }
+       static QString getCellFileTag() { return "cell_file"; }
+       static QString getCellColorFileTag() { return "cell_color_file"; }
+       static QString getCellProjectionFileTag() { return "cellproj_file"; }
+--- a/caret_files/TrajectoryFile.cxx
++++ b/caret_files/TrajectoryFile.cxx
+@@ -45,6 +45,7 @@
+ #include <QDataStream>
+ #include <QTextStream>
+ #include <QFile>
++#include <QtDebug>
+ 
+ using namespace std;
+ 
+@@ -608,7 +609,7 @@
+ 	m_colorVolumeNodes = color;
+ };
+ 
+-const double ElectrodeTrajectory::getCylinderID() const
++double ElectrodeTrajectory::getCylinderID() const
+ {
+ 	return m_dCylinderID;
+ };
+@@ -618,7 +619,7 @@
+ 	m_dCylinderID = id;
+ };
+ 
+-const double ElectrodeTrajectory::getCylinderOD() const
++double ElectrodeTrajectory::getCylinderOD() const
+ {
+ 	return m_dCylinderOD;
+ };
+@@ -628,7 +629,7 @@
+ 	m_dCylinderOD = od;
+ };
+ 
+-const double ElectrodeTrajectory::getCylinderH() const
++double ElectrodeTrajectory::getCylinderH() const
+ {
+ 	return m_dCylinderH;
+ };
+@@ -638,7 +639,7 @@
+ 	m_dCylinderH = h;
+ };
+ 
+-const double ElectrodeTrajectory::getMaxPenetrationDepth() const
++double ElectrodeTrajectory::getMaxPenetrationDepth() const
+ {
+ 	return m_dMaxPenetrationDepth;
+ }
+@@ -648,13 +649,13 @@
+ 	m_dMaxPenetrationDepth = d;
+ }
+ 
+-const double ElectrodeTrajectory::getPenetrationDepth() const
++double ElectrodeTrajectory::getPenetrationDepth() const
+ {
+ 	return (double)getDepthToolDepthPct()/100.0d * getMaxPenetrationDepth();
+ }
+ 
+ /// Get position of current penetration, as defined by depth and trajectory
+-const void ElectrodeTrajectory::getPenetrationPosition(double dpt[3]) const
++void ElectrodeTrajectory::getPenetrationPosition(double dpt[3]) const
+ {
+ 	double dEntry[3];
+ 	double xc[3], yc[3], zc[3];
+@@ -697,7 +698,7 @@
+ }
+ 
+ 
+-const double ElectrodeTrajectory::getSkullNearbyD() const
++double ElectrodeTrajectory::getSkullNearbyD() const
+ {
+ 	return m_dSkullNearbyD;
+ };
+@@ -713,7 +714,7 @@
+ 	m_dGridRotation = r;
+ };
+ 
+-const double ElectrodeTrajectory::getGridRotation() const
++double ElectrodeTrajectory::getGridRotation() const
+ {
+ 	return m_dGridRotation;
+ };
+@@ -1043,6 +1044,7 @@
+ 			}
+ 			setAABBMin(aabbMin);
+ 			setAABBMax(aabbMax);
++			qDebug() << "Read " << m_dfsSkull.nvertices << " vertices from skull file " << sFileSkull;
+ 		}
+ 		catch (FileException& e) {
+         	fileSkull.close();
+@@ -1080,13 +1082,13 @@
+          	throw e;
+ 		}
+ 
++		qDebug() << "Read " << m_dfsBrain.nvertices << " from brain surface file " << sFileBrain;
+ 		fileBrain.close();
+ 	}
+ 	else {
+     	throw FileException(sFileBrain, "Failure trying to open: ");
+ 	}
+ 
+-
+ }
+ 
+ /// Write the file's data (header has already been written)
+@@ -1188,6 +1190,8 @@
+    readLine(stream, line);
+    if (!line.isNull()) QTextStream(&line) >> iNumTrajectories;
+ 
++   qDebug() << "TrajectoryFile: will read n trajectories: " << iNumTrajectories;
++
+    if (iNumTrajectories > 0)
+    {
+ 		_trajectories.clear();
+@@ -1325,124 +1329,11 @@
+ 	return;
+ }
+ 
+-
+-#if 0
+-bool TrajectoryFile::getHeaderBool(const std::string& name, bool& bval)
+-{
+-	bool b = false;
+-	std::string sTemp = getHeaderTag(QString(name)).toStdString();
+-	if (sTemp.length()>0)
+-	{
+-		istringstream iss(sTemp);
+-		iss >> bval;
+-		if (iss) b = true;
+-	}
+-	return b;
+-}
+-
+-bool TrajectoryFile::getHeaderFloat(const std::string& name, float& fval)
+-{
+-	bool b = false;
+-	std::string sTemp = getHeaderTag(name).toStdString();
+-	if (sTemp.length()>0)
+-	{
+-		istringstream iss(sTemp);
+-		iss >> fval;
+-		if (iss) b = true;
+-	}
+-	return b;
+-}
+-
+-bool TrajectoryFile::getHeaderInt(const std::string& name, int& ival)
+-{
+-	bool b=false;
+-	string sTemp = getHeaderTag(name).toStdString();
+-	if (sTemp.length()>0)
+-	{
+-		istringstream iss(sTemp);
+-		iss >> ival;
+-		if (iss) b=true;
+-	}
+-	return b;
+-}
+-
+-bool TrajectoryFile::getHeaderXyz(const std::string& name, float xyz[3])
+-{
+-	bool b=false;
+-	string sTemp = getHeaderTag(name).toStdString();
+-	if (sTemp.length()>0)
+-	{
+-		istringstream iss(sTemp);
+-		iss >> xyz[0] >> xyz[1] >> xyz[2];
+-		if (iss) b=true;
+-	}
+-	return b;
+-}
+-
+-bool TrajectoryFile::getHeaderColor(const std::string& name, QColor& color)
+-{
+-	bool b=false;
+-	int red, green, blue;
+-	string sTemp = getHeaderTag(name).toStdString();
+-	if (sTemp.length()>0)
+-	{
+-		istringstream iss(sTemp);
+-		iss >> red >> green >> blue;
+-		if (iss)
+-		{
+-			b=true;
+-			color.setRgb(red, green, blue);
+-		}
+-	}
+-	return b;
+-}
+-
+-void TrajectoryFile::setHeaderBool(const std::string& name, const bool& b)
+-{
+-	ostringstream out;
+-	out << b;
+-	setHeaderTag(name, out.str());
+-}
+-
+-void TrajectoryFile::setHeaderFloat(const std::string& name, const float& f)
+-{
+-	ostringstream out;
+-	out << f;
+-	setHeaderTag(name, out.str());
+-}
+-
+-void TrajectoryFile::setHeaderInt(const std::string& name, const int& i)
+-{
+-	ostringstream out;
+-	out << i;
+-	setHeaderTag(name, out.str());
+-}
+-
+-void TrajectoryFile::setHeaderXyz(const std::string& name, const float xyz[3])
+-{
+-	ostringstream out;
+-	out << xyz[0] << " " << xyz[1] << " " << xyz[2];
+-	setHeaderTag(name, out.str());
+-}
+-
+-void TrajectoryFile::setHeaderColor(const std::string& name, const QColor& color)
+-{
+-	ostringstream out;
+-	int red, green, blue;
+-	color.getRgb(&red, &green, &blue);
+-	out << red << " " << green << " " << blue;
+-	setHeaderTag(name, out.str());
+-}
+-#endif
+-
+-
+ bool TrajectoryFile::empty() const
+ {
+ 	return (getNumSkullVertices() == 0);
+ }
+ 
+-
+-
+ /// Get the color assigned to the brain surface
+ const QColor& TrajectoryFile::getBrainSurfaceColor() const
+ {
+@@ -1581,34 +1472,32 @@
+ 	return;
+ };
+ 
+-#if 0
+-void TrajectoryFile::getFace(int index, float **pfv1, float **pfv2, float **pfv3, float **pfn1, float **pfn2, float **pfn3) const
++void TrajectoryFile::getFace(int index, float *pfv1, float *pfv2, float *pfv3, float *pfn1, float *pfn2, float *pfn3) const
+ {
+ 	int iface = index*3;
+-	(*pfv1) = m_dfsSkull.vertices + m_dfsSkull.faces[iface]*3;
+-	(*pfv2) = m_dfsSkull.vertices + m_dfsSkull.faces[iface+1]*3;
+-	(*pfv3) = m_dfsSkull.vertices + m_dfsSkull.faces[iface+2]*3;
+-	(*pfn1) = m_dfsSkull.vertexnormals + m_dfsSkull.faces[iface]*3;
+-	(*pfn2) = m_dfsSkull.vertexnormals + m_dfsSkull.faces[iface+1]*3;
+-	(*pfn3) = m_dfsSkull.vertexnormals + m_dfsSkull.faces[iface+2]*3;
++	int i;
++	for (i=0; i<3; i++)
++	{
++		pfv1[i] = m_dfsSkull.vertices[m_dfsSkull.faces[iface]*3 + i];
++		//(*pfv1) = m_dfsSkull.vertices + m_dfsSkull.faces[iface]*3;
++		pfv2[i] = m_dfsSkull.vertices[m_dfsSkull.faces[iface+1]*3 + i];
++		//(*pfv2) = m_dfsSkull.vertices + m_dfsSkull.faces[iface+1]*3;
++		pfv3[i] = m_dfsSkull.vertices[m_dfsSkull.faces[iface+2]*3 + i];
++		//(*pfv3) = m_dfsSkull.vertices + m_dfsSkull.faces[iface+2]*3;
++		pfn1[i] = m_dfsSkull.vertexnormals[m_dfsSkull.faces[iface]*3 + i];
++		//(*pfn1) = m_dfsSkull.vertexnormals + m_dfsSkull.faces[iface]*3;
++		pfn2[i] = m_dfsSkull.vertexnormals[m_dfsSkull.faces[iface+1]*3 + i];
++		//(*pfn2) = m_dfsSkull.vertexnormals + m_dfsSkull.faces[iface+1]*3;
++		pfn3[i] = m_dfsSkull.vertexnormals[m_dfsSkull.faces[iface+2]*3 + i];
++		//(*pfn3) = m_dfsSkull.vertexnormals + m_dfsSkull.faces[iface+2]*3;
++	}
+ }
+-#endif
+ 
+ const std::multimap<int, int>& TrajectoryFile::getSkullFaceMap() const
+ {
+ 	return m_dfsSkull.mapFaces;
+ };
+ 
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+ bool TrajectoryFile::getSkullNearestPoint(double p[3], double fNearest[3])
+ {
+ 	bool bValue = false;
+@@ -1621,18 +1510,15 @@
+ 		nnIdx = new ANNidx[1];						// allocate near neigh indices
+ 		dists = new ANNdist[1];						// allocate near neighbor dists
+ 		nnIdx[0]=0;
+-
+ 		m_dfsSkull.tree->annkSearch(						// search
+ 				p,									// query point
+ 				1,									// number of near neighbors
+ 				nnIdx,							// nearest neighbors (returned)
+ 				dists							// distance (returned)
+ 				);
+-
+ 		getSkullVertex(nnIdx[0], fNearest);
+ 		bValue = true;
+ 	}
+-
+ 	return bValue;
+ }
+ 
+@@ -1727,8 +1613,8 @@
+ 			}
+ 			std::vector<float> vecFiducial;
+ 			cf->getAllCoordinates(vecFiducial);
+-			for (unsigned int i=0; i<num; i++)
+-				for (unsigned int j=0; j<3; j++)
++			for (int i=0; i<num; i++)
++				for (int j=0; j<3; j++)
+ 					m_paFiducial[i][j] = (double)vecFiducial[i*3+j];
+ 			m_kdtreeFiducial = new ANNkd_tree(m_paFiducial, num, 3);
+ 			if (NULL == m_kdtreeFiducial)
+@@ -1758,7 +1644,6 @@
+ 	double radius;
+ 	double fEntry[3];				// entry point on brain surface
+ 	double xc[3], yc[3], zc[3];
+-	double fPathDistance;
+ 	double fSqSearchRadius;		// radius used for searching.
+ 	double fSqRadius;				// the path radius squared
+ 	int isteps;						// count index - # times search has been done
+@@ -1797,7 +1682,7 @@
+ 
+ 	// Get path unit vector.
+ 	for (i=0; i<3; i++) v[i] = end[i]-start[i];
+-	fPathDistance = MathUtilities::normalize(v);
++	MathUtilities::normalize(v);
+ 
+ 	// Search loop
+ 	f=0;
+@@ -1868,7 +1753,6 @@
+ 	double p[3];
+ 	double fstepsize;
+ 	double fSqSearchRadius;		// radius used for searching.
+-	double fSqRadius;				// the path radius squared
+ 	int isteps=0;						// count index - # times search has been done
+ 	double f=0;							// distance along path to search at.
+ 	int i;
+@@ -1877,12 +1761,10 @@
+ 	ANNdistArray distances;			// dynamically allocated array of distances
+ 	double fDpClosest = 0.0;
+ 	double fClosest = 999999.0;
+-	int iClosest=-1;
+ 
+ 	// Search radius is twice the path radius
+ 	fstepsize = 3.4641016 * radius;		// that's 2 * sqrt(3) * radius
+ 	fSqSearchRadius = radius*radius*4;
+-	fSqRadius = radius*radius;
+ 
+ 	// Get path distance and unit vector
+ 	for (i=0; i<3; i++) v[i] = end[i]-start[i];
+@@ -1941,9 +1823,7 @@
+ 				if (dist < fClosest)
+ 				{
+ 					fClosest = dist;	// we're saving the closest distance squared....
+-					iClosest = indices[i];
+ 					fDpClosest = dp;
+-//					std::cout << "Closest index=" << iClosest << " dist=" << fClosest << std::endl;
+ 				}
+ 			}
+ 
+@@ -1979,6 +1859,7 @@
+ 	// fetch a set of skull points close to the cylinder center. We use the nearby diameter here - this will
+ 	// yield a superset of the points we really want.
+ 	ep->getCylinderCenter(xyzCenter);
++
+ 	nidx = findSkullNearbyPoints(xyzCenter, &idx, ep->getSkullNearbyD()/2);
+ 
+ 	// Find annulus of points which correspond
+@@ -2063,8 +1944,8 @@
+ 		// the Multiply3x3 function is gone. Since this is the only place it gets used,
+ 		// just code a dumb step here. Ugh.
+ 		//MathUtilities::Multiply3x3(T, skp, skprime);
+-		for (i=0; i<3; i++)
+-			skprime[i] = T[i][0]*skp[0] + T[i][1]*skp[1] + T[i][2]*skp[2];
++		for (j=0; j<3; j++)
++			skprime[j] = T[j][0]*skp[0] + T[j][1]*skp[1] + T[j][2]*skp[2];
+ 
+ 
+ 		// Is this point within the annulus region
+@@ -2096,8 +1977,6 @@
+ 		}
+ 	}
+ 
+-
+-
+ 	// Allocate a double array for the plane fit.
+ 	double *skullNearbyPoints;
+ 	double plane[4];
+@@ -2139,56 +2018,6 @@
+ 
+ 	delete[] skullNearbyPoints;
+ 
+-#ifdef STILL_USING_OLD_METHOD
+-
+-	for (j=0; j<3; j++) annulusAvg[j] = annulusSum[j]/nidxAnnulus;
+-
+-	// Form matrix for finding min volume ellipsoid.
+-	// See http://public.kitware.com/pipermail/vtkusers/2004-March/072916.html
+-	// Yeah, not much of a reference. Let's see if it works....
+-	for (i=0; i<nidxAnnulus; i++)
+-	{
+-		getSkullVertex(idxAnnulus[i], sk);
+-		for (j=0; j<3; j++) sk[j] = annulusAvg[j]-sk[j];
+-		sxx += sk[0]*sk[0];
+-		syy += sk[1]*sk[1];
+-		szz += sk[2]*sk[2];
+-		sxy += sk[0]*sk[1];
+-		syz += sk[1]*sk[2];
+-		sxz += sk[0]*sk[2];
+-	}
+-
+-	float *mat[3], mat0[3], mat1[3], mat2[3];		// elements of inertia matrix
+-	float evals[3];										// will hold eigenvalues
+-	float *evecs[3], evec0[3],evec1[3],evec2[3];	// will hold eigenvectors
+-	float normal[3];
+-
+-	//setup
+-	mat[0] = mat0; mat[1] = mat1; mat[2] = mat2;
+-	evecs[0] = evec0; evecs[1] = evec1; evecs[2] = evec2;
+-	mat[0][0] = sxx; mat[0][1] = sxy; mat[0][2] = sxz;
+-	mat[1][0] = sxy; mat[1][1] = syy; mat[1][2] = syz;
+-	mat[2][0] = sxz; mat[2][1] = syz; mat[2][2] = szz;
+-
+-	// solve
+-	MathUtilities::Jacobi(mat, evals, evecs);
+-	normal[0] = evecs[0][2];
+-	normal[1] = evecs[1][2];
+-	normal[2] = evecs[2][2];
+-
+-	// Check that normal is in same direction, roughly, as trajectory
+-	if (MathUtilities::dotProduct(normal, zprime) < 0)
+-	{
+-		for (i=0; i<3; i++) normal[i]*=-1;
+-	}
+-
+-	float ang = acos(MathUtilities::dotProduct(zprime, normal)) * MathUtilities::RadiansToDegrees();
+-
+-	ep->setCylinderFitValues(annulusAvg, normal);
+-	ep->setCylinderBaseAngle(ang);
+-#endif
+-
+-
+ 	ep->setSkullNearbyIdx(idxNearby, nidxNearby);
+ 	ep->setSkullAnnulusIdx(idxAnnulus, nidxAnnulus);
+ 	ep->setCylinderCoords(xprime, yprime, zprime, zprimeMax);
+@@ -2296,7 +2125,6 @@
+ 	{
+ 		std::cerr << "getSkullNearestPoint failed!" << std::endl;
+ 	}
+-
+ }
+ 
+ // update the cylinder center when trajectory angles change. The target point itself has
+--- a/caret_files/TrajectoryFile.h
++++ b/caret_files/TrajectoryFile.h
+@@ -282,7 +282,7 @@
+ 	void setGridRotation(double r);
+ 
+ 	/// get rotation of grid w/r/to cylinder coords
+-	const double getGridRotation() const;
++	double getGridRotation() const;
+ 
+ 	const QColor& getSkullSurfaceAnnulusColor() const;
+ 	void setSkullSurfaceAnnulusColor(const QColor& color);
+@@ -308,29 +308,29 @@
+ 	const QColor& getVolumeNodesColor() const;
+ 	void setVolumeNodesColor(const QColor& color);
+ 
+-	const double getCylinderID() const;
++	double getCylinderID() const;
+ 	void setCylinderID(double id);
+ 
+-	const double getCylinderOD() const;
++	double getCylinderOD() const;
+ 	void setCylinderOD(double od);
+ 
+-	const double getCylinderH() const;
++	double getCylinderH() const;
+ 	void setCylinderH(double h);
+ 
+-	const double getMaxPenetrationDepth() const;
++	double getMaxPenetrationDepth() const;
+ 	void setMaxPenetrationDepth(double d);
+ 
+ 	/// Get depth of penetration, as defined by the max penetration depth and the current slider value.
+-	const double getPenetrationDepth() const;
++	double getPenetrationDepth() const;
+ 
+ 	/// Get position of current penetration, as defined by depth and trajectory
+-	const void getPenetrationPosition(double dpt[3]) const;
++	void getPenetrationPosition(double dpt[3]) const;
+ 
+ 	/// Get offset vector for current grid position and rotation.
+ 	/// The returned vector is parallel to the plane of the grid.
+ 	void getGridEntryOffset(double *offset) const;
+ 
+-	const double getSkullNearbyD() const;
++	double getSkullNearbyD() const;
+ 	void setSkullNearbyD(double d);
+ 
+ 
+@@ -446,7 +446,9 @@
+ 	/// that name exists).
+ 	ElectrodeTrajectoryP removeTrajectory(const std::string name);
+ 
+-//	void getFace(int index, float **pfv1, float **pfv2, float **pfv3, float **pfn1, float **pfn2, float **pfn3) const;
++	// pass existing arrays like float fv1[3] to this function.
++	// ugh, vertices stored as double but normals as float.
++	void getFace(int index, float *pfv1, float *pfv2, float *pfv3, float *pfn1, float *pfn2, float *pfn3) const;
+ 
+ 	const std::multimap<int, int>& getSkullFaceMap() const;
+ 
+--- a/caret_gui/CMakeLists.txt
++++ b/caret_gui/CMakeLists.txt
+@@ -190,6 +190,7 @@
+       GuiTopologyTypeComboBox.h 
+ 	   GuiTransformationMatrixDialog.h 
+       GuiTransformationMatrixSelectionControl.h 
++      GuiTrajectoryToolDialog.h
+ 	   GuiUserViewSaveDialog.h 
+       GuiVectorFileComboBox.h 
+       GuiVocabularyFileEditorDialog.h 
+@@ -400,6 +401,7 @@
+       GuiTopologyTypeComboBox.h 
+ 	   GuiTransformationMatrixDialog.h 
+       GuiTransformationMatrixSelectionControl.h 
++      GuiTrajectoryToolDialog.h
+ 	   GuiUserViewSaveDialog.h 
+       GuiVectorFileComboBox.h 
+       GuiVocabularyFileEditorDialog.h 
+@@ -603,6 +605,7 @@
+ 	   GuiTopologyFileComboBox.cxx 
+ 	   GuiTransformationMatrixDialog.cxx 
+       GuiTransformationMatrixSelectionControl.cxx 
++      GuiTrajectoryToolDialog.cxx
+ 	   GuiUserViewSaveDialog.cxx 
+       GuiVectorFileComboBox.cxx 
+       GuiVocabularyFileEditorDialog.cxx 
+--- a/caret_gui/GuiBrainModelOpenGL.h
++++ b/caret_gui/GuiBrainModelOpenGL.h
+@@ -45,7 +45,7 @@
+ class GuiBrainModelOpenGLPopupMenu;
+ class GuiBrainSetAndModelSelectionControl;
+ class TopologyFile;
+-
++class BrainModelSelectedItem;			// djs
+ class GuiBrainModelOpenGLKeyEvent;
+ class GuiBrainModelOpenGLMouseEvent;
+ 
+@@ -227,6 +227,10 @@
+        /// set the displayed brain model
+        void setDisplayedBrainModel(const BrainModel* bm);
+        
++       /// Get the currently selected node DJS. 
++       BrainModelOpenGLSelectedItem getSelectedNode() const { return openGL->getSelectedNode(); }
++       
++       
+        /// Reset the displayed brain models in all windows
+        static void setAllDisplayedBrainModelIndices(const int newIndex);
+        
+--- a/caret_gui/GuiDataFileOpenDialog.cxx
++++ b/caret_gui/GuiDataFileOpenDialog.cxx
+@@ -144,6 +144,7 @@
+    filterNames << FileFilters::getTopologyGenericFileFilter();
+    filterNames << FileFilters::getTransformationMatrixFileFilter();
+    filterNames << FileFilters::getTransformationDataFileFilter();
++   filterNames << FileFilters::getTrajectoryFileFilter();
+    filterNames << FileFilters::getVocabularyFileFilter();
+    filterNames << FileFilters::getVolumeAnatomyFileFilter();
+    filterNames << FileFilters::getVolumeFunctionalFileFilter();
+@@ -769,6 +770,9 @@
+    else if (filterName == FileFilters::getTopologyGenericFileFilter()) {
+       error = openDataFile(this, GENERIC_TOPOLOGY, fileName, appendToCurrentFileFlag, addToSpecFileFlag, msg, warning);
+    }
++   else if (filterName == FileFilters::getTrajectoryFileFilter()) {
++      error = openDataFile(this, SpecFile::getTrajectoryFileTag(), fileName, appendToCurrentFileFlag, addToSpecFileFlag, msg, warning);
++   }
+    else if (filterName == FileFilters::getVolumeAnatomyFileFilter()) {
+       error = openDataFile(this, SpecFile::getVolumeAnatomyFileTag(), fileName, appendToCurrentFileFlag, addToSpecFileFlag, msg, warning);
+       if (spmLeftOnRightFlag) {
+@@ -1433,7 +1437,7 @@
+       }
+    }
+    
+-   GuiFilesModified fm;;
++   GuiFilesModified fm;
+    
+    try {
+       if (specFileTag == SpecFile::getAreaColorFileTag()) {
+@@ -2091,6 +2095,10 @@
+          fm.setTopologyModified();
+          QApplication::restoreOverrideCursor();
+       }
++      else if (specFileTag == SpecFile::getTrajectoryFileTag()) {
++         theMainWindow->getBrainSet()->readTrajectoryFile(name);
++         fm.setTrajectoryModified();
++      }
+       else if (specFileTag == SpecFile::getTransformationMatrixFileTag()) {
+          theMainWindow->getBrainSet()->readTransformationMatrixFile(name, append, update);
+          fm.setTransformationMatrixModified();
+--- a/caret_gui/GuiDataFileSaveDialog.cxx
++++ b/caret_gui/GuiDataFileSaveDialog.cxx
+@@ -94,6 +94,7 @@
+ #include "VectorFile.h"
+ #include "TopographyFile.h"
+ #include "TopologyFile.h"
++#include "TrajectoryFile.h"
+ #include "QtMultipleInputDialog.h"
+ #include "QtUtilities.h"
+ #include "VocabularyFile.h"
+@@ -279,6 +280,7 @@
+    filterNames << FileFilters::getSurfaceShapeFileFilter();
+    filterNames << FileFilters::getTopographyFileFilter();
+    filterNames << FileFilters::getTopologyGenericFileFilter();
++   filterNames << FileFilters::getTrajectoryFileFilter();
+    filterNames << FileFilters::getTransformationMatrixFileFilter();
+    filterNames << FileFilters::getVocabularyFileFilter();
+    filterNames << FileFilters::getVolumeAnatomyFileFilter();
+@@ -2861,6 +2863,10 @@
+                                   SpecFile::getTransformationMatrixFileExtension());
+             brainSet->writeTransformationMatrixFile(fileName);
+          }
++         else if (filterName == FileFilters::getTrajectoryFileFilter()) {
++        	 TrajectoryFile* tjf = brainSet->getTrajectoryFile();
++        	 brainSet->writeTrajectoryFile(fileName);
++         }
+          else if (filterName == FileFilters::getVocabularyFileFilter()) {
+             VocabularyFile* vf = brainSet->getVocabularyFile();
+             updateMetadataAndName(vf,
+--- a/caret_gui/GuiFilesModified.cxx
++++ b/caret_gui/GuiFilesModified.cxx
+@@ -85,6 +85,7 @@
+       vector &&
+       topography &&
+       topology &&
++	  trajectory &&
+       transformationMatrix &&
+       transformationData &&
+       vocabulary &&
+@@ -137,6 +138,7 @@
+    vector = status;
+    topography = status;
+    topology = status;
++   trajectory = status;
+    transformationMatrix = status;
+    transformationData = status;
+    vocabulary = status;
+--- a/caret_gui/GuiFilesModified.h
++++ b/caret_gui/GuiFilesModified.h
+@@ -194,6 +194,9 @@
+       /// set wustl region has been modified
+       void setWustlRegionModified() { wustlRegion = true; }
+ 
++      /// set trajectory data modified
++      void setTrajectoryModified() { trajectory = true; }
++
+       /// set inhibit coordinate file surface default scaling
+       void setInhibitSurfaceDefaultScaling() { inhibitDefaultSurfaceScaling = true; }
+       
+@@ -240,7 +243,7 @@
+       bool volume;
+       bool vtkModel;
+       bool wustlRegion;
+-      
++      bool trajectory;
+       
+       bool inhibitDefaultSurfaceScaling;
+       friend class GuiMainWindow;
+--- a/caret_gui/GuiMainWindow.cxx
++++ b/caret_gui/GuiMainWindow.cxx
+@@ -152,6 +152,7 @@
+ #include "GuiTransformationMatrixDialog.h"
+ #include "GuiVocabularyFileEditorDialog.h"
+ #include "GuiVolumeBiasCorrectionDialog.h"
++#include "GuiTrajectoryToolDialog.h"
+ #include "GuiVolumeResizingDialog.h"
+ #include "GuiVolumeThresholdSegmentationDialog.h"
+ #include "GuiVolumeAttributesDialog.h"
+@@ -178,6 +179,7 @@
+ #include "VectorFile.h"
+ #include "SystemUtilities.h"
+ #include "TopographyFile.h"
++#include "TrajectoryFile.h"
+ #include "VocabularyFile.h"
+ #include "VtkModelFile.h"
+ #include "WustlRegionFile.h"
+@@ -391,6 +393,7 @@
+    studyMetaDataFileEditorDialog = NULL;
+    surfaceRegionOfInterestDialog = NULL;
+    surfaceRegionOfInterestDialogOLD = NULL;
++   trajectoryToolDialog = NULL;
+    transformMatrixEditorDialog = NULL;
+    volumeThresholdSegmentationDialog = NULL;
+    volumeResizingDialog    = NULL;
+@@ -412,7 +415,7 @@
+    volumePaintColorKeyDialog = NULL;
+    volumeProbAtlasColorKeyDialog = NULL;
+     
+-   QString title("CARET v");
++   QString title("SPLASH/CARET v");
+ #ifdef UBUNTU
+    title.append("u");
+ #endif
+@@ -1305,6 +1308,29 @@
+ }
+ 
+ /**
++ * Create, possibly show and return the electrode trajectory tool dialog.
++ */
++GuiTrajectoryToolDialog*
++GuiMainWindow::getTrajectoryToolDialog(bool showIt)
++{
++   if (trajectoryToolDialog == NULL) {
++      trajectoryToolDialog = new GuiTrajectoryToolDialog(this, getBrainSet());
++   }
++   if (showIt)
++   {
++	   trajectoryToolDialog->show();
++	   trajectoryToolDialog->activateWindow();
++   }
++   return trajectoryToolDialog;
++}
++
++
++void GuiMainWindow::displayTrajectoryToolDialog()
++{
++	getTrajectoryToolDialog(true);
++}
++
++/**
+  * Show the flat morphing dialog
+  */
+ void
+@@ -1841,6 +1867,7 @@
+    checkFileModified("Study Metadata File", bs->getStudyMetaDataFile(), msg);
+    checkFileModified("Surface Shape File", bs->getSurfaceShapeFile(), msg);
+    checkFileModified("Topography File", bs->getTopographyFile(), msg);
++   checkFileModified("Trajectory File", bs->getTrajectoryFile(), msg);
+    checkFileModified("Vocabulary File", bs->getVocabularyFile(), msg);
+    checkFileModified("Transformation Matrix File", bs->getTransformationMatrixFile(), msg);
+    for (int i = 0; i < bs->getNumberOfVectorFiles(); i++) {
+@@ -2135,6 +2162,7 @@
+       return;
+    }
+ 
++   qDebug() << "GuiMainWindow::readSpecFile() - call GuiSpecFileDialog()";
+    GuiSpecFileDialog* specDialog = new GuiSpecFileDialog(this, sf, 
+                                         GuiSpecFileDialog::SPEC_DIALOG_MODE_OPEN_SPEC_FILE);
+    specDialog->show();
+--- a/caret_gui/GuiMainWindow.h
++++ b/caret_gui/GuiMainWindow.h
+@@ -109,6 +109,7 @@
+ //class GuiSpeechGenerator;
+ class GuiStudyCollectionFileEditorDialog;
+ class GuiStudyMetaDataFileEditorDialog;
++class GuiTrajectoryToolDialog;
+ class GuiTransformationMatrixDialog;
+ class GuiVocabularyFileEditorDialog;
+ class GuiVolumeBiasCorrectionDialog;
+@@ -267,6 +268,9 @@
+       
+       /// create, (possibly show), and return the volume region of interest dialog
+       GuiVolumeRegionOfInterestDialog* getVolumeRegionOfInterestDialog(const bool showIt);
++
++      GuiTrajectoryToolDialog* getTrajectoryToolDialog(const bool showIt = true);
++
+       
+       /// create, (possibly show), and return the threshold segmentation dialog
+       GuiVolumeThresholdSegmentationDialog* getVolumeThresholdSegmentationDialog(const bool showIt);
+@@ -279,7 +283,7 @@
+       
+       /// create, (possibly show), and return the interpolate surface dialog
+       GuiInterpolateSurfacesDialog* getInterpolateSurfaceDialog(const bool showIt);
+-      
++
+       /// get the align surface to standard orientation dialog
+       GuiAlignSurfaceToStandardOrientationDialog* getAlignSurfaceToStandardOrientationDialog() {
+          return alignSurfaceToStandardOrientationDialog;
+@@ -429,6 +433,9 @@
+       
+       /// display the border color key
+       void displayBorderColorKey();
++
++      /// create, (possibly show), and return the electrode trajectory tool dialog
++      void displayTrajectoryToolDialog();
+       
+       /// display the cell color key
+       void displayCellColorKey();
+@@ -700,6 +707,9 @@
+       
+       /// smoothing dialog
+       GuiSmoothingDialog* smoothingDialog;
++
++      /// electrode trajectory tool dialog
++      GuiTrajectoryToolDialog *trajectoryToolDialog;
+       
+       /// borders create interpolated dialog
+       GuiBordersCreateInterpolatedDialog* bordersCreateInterpolatedDialog;
+--- a/caret_gui/GuiMainWindowHelpActions.cxx
++++ b/caret_gui/GuiMainWindowHelpActions.cxx
+@@ -66,6 +66,12 @@
+    QObject::connect(aboutQtAction, SIGNAL(triggered(bool)),
+                     this, SLOT(helpMenuAboutQT()));
+ 
++   aboutSplashAction = new QAction(parent);
++   aboutSplashAction->setText("About Splash...");
++   aboutSplashAction->setObjectName("aboutSplashAction");
++   QObject::connect(aboutSplashAction, SIGNAL(triggered(bool)),
++                    this, SLOT(helpMenuAboutSplash()));
++
+    aboutOpenGLAction = new QAction(parent);
+    aboutOpenGLAction->setText("About OpenGL...");
+    aboutOpenGLAction->setObjectName("aboutOpenGLAction");
+@@ -266,6 +272,38 @@
+    te.exec();
+ }
+ 
++
++void GuiMainWindowHelpActions::helpMenuAboutSplash()
++{
++	QString msg;
++	msg.append("SPLASh v1.0\n");
++	msg.append("Stereotactic PLAnning Software\n");
++	msg.append("\n");
++	msg.append("Daniel Sperka and Jochen Ditterich\n");
++	msg.append("Copyright 2009 Regents University of California\n");
++	msg.append("\n");
++	msg.append("Center for Neuroscience\n");
++	msg.append("University of California, Davis\n");
++	msg.append("\n");
++	msg.append("http://systems.ucdavis.edu/ett.html\n");
++	msg.append("djsperka@ucdavis.edu\n");
++	msg.append("\n");
++	msg.append("SPLASh also contains the following software:\n");
++	msg.append("\n");
++	msg.append("Approximate Nearest Neighbors (ANN) Library\n");
++	msg.append("Copyright (c) 1997-2005 University of Maryland,\n");
++	msg.append("    Sunil Arya and David Mount All Rights Reserved)\n");
++	msg.append("    http://www.cs.umd.edu/~mount/ANN/\n");
++	msg.append("\n");
++	msg.append("The following algorithm has proved quite useful as well.\n");
++	msg.append("http://codesuppository.blogspot.com/2006/03/best-fit-plane.html\n");
++	msg.append("Copyright (c) 1998-2006.  All Rights Reserved, Geometric Tools, Inc. \n");
++	msg.append("http://www.geometrictools.com\n");
++
++	QMessageBox::information(theMainWindow, "Splash Information", msg);
++}
++
++
+ /**
+  *
+  */
+--- a/caret_gui/GuiMainWindowHelpActions.h
++++ b/caret_gui/GuiMainWindowHelpActions.h
+@@ -49,7 +49,10 @@
+       
+       /// about QT action
+       QAction* getAboutQtAction() { return aboutQtAction; }
+-      
++
++      /// about SPLASH action
++      QAction* getAboutSplashAction() { return aboutSplashAction; }
++
+       /// about OpenGL action
+       QAction* getAboutOpenGLAction() { return aboutOpenGLAction; }
+       
+@@ -92,6 +95,9 @@
+       
+       /// display information about the qt version
+       void helpMenuAboutQT();
++
++      /// display splash info
++      void helpMenuAboutSplash();
+       
+       /// display information about the OpenGL version
+       void helpMenuAboutOpenGL();
+@@ -132,7 +138,10 @@
+       
+       /// about QT action
+       QAction* aboutQtAction;
+-      
++
++      /// about Splash action
++      QAction* aboutSplashAction;
++
+       /// about OpenGL action
+       QAction* aboutOpenGLAction;
+       
+--- a/caret_gui/GuiMainWindowHelpMenu.cxx
++++ b/caret_gui/GuiMainWindowHelpMenu.cxx
+@@ -45,6 +45,8 @@
+                     helpActions, SLOT(updateActions()));
+                     
+    addAction(helpActions->getAboutAction());
++
++   addAction(helpActions->getAboutSplashAction());
+    
+    addAction(helpActions->getAboutQtAction());
+ 
+--- a/caret_gui/GuiMainWindowVolumeActions.cxx
++++ b/caret_gui/GuiMainWindowVolumeActions.cxx
+@@ -200,6 +200,12 @@
+    mathOperationsVolumeAction->setObjectName("mathOperationsVolumeAction");
+    QObject::connect(mathOperationsVolumeAction, SIGNAL(triggered(bool)),
+                     mainWindowParent, SLOT(displayVolumeMathDialog()));
++
++   trajectoryToolAction = new QAction(mainWindowParent);
++   trajectoryToolAction->setText("Electrode trajectory tool...");
++   trajectoryToolAction->setObjectName("trajectoryToolAction");
++   QObject::connect(trajectoryToolAction, SIGNAL(triggered(bool)),
++                    mainWindowParent, SLOT(displayTrajectoryToolDialog()));
+ }
+ 
+ /**
+--- a/caret_gui/GuiMainWindowVolumeActions.h
++++ b/caret_gui/GuiMainWindowVolumeActions.h
+@@ -84,6 +84,9 @@
+       /// create math operations action
+       QAction* getMathOperationsVolumeAction() { return mathOperationsVolumeAction; }
+ 
++      /// generate electrode traj tool
++      QAction* getTrajectoryToolAction() { return trajectoryToolAction; }
++
+       /// is transform rotation checked
+       bool getTranformRotationChecked() const { return enableRotationAction->isChecked(); }
+       
+@@ -155,6 +158,9 @@
+       /// create math operations action
+       QAction* mathOperationsVolumeAction;
+       
++      /// trajectory tool action
++      QAction* trajectoryToolAction;
++
+       /// create empty volume action
+       QAction* createEmptyVolumeAction;
+       
+--- a/caret_gui/GuiMainWindowVolumeMenu.cxx
++++ b/caret_gui/GuiMainWindowVolumeMenu.cxx
+@@ -67,6 +67,8 @@
+ 
+    createTransformSubMenu();
+    
++   addAction(volumeActions->getTrajectoryToolAction());
++
+    QObject::connect(this, SIGNAL(aboutToShow()),
+                     volumeActions, SLOT(updateActions()));
+ }
+--- a/caret_gui/GuiSpecFileDialog.cxx
++++ b/caret_gui/GuiSpecFileDialog.cxx
+@@ -47,6 +47,7 @@
+ #include <QToolButton>
+ #include <QToolTip>
+ #include <QGridLayout>
++#include <QtDebug>
+ 
+ #include "AreaColorFile.h"
+ #include "ArealEstimationFile.h"
+@@ -718,6 +719,13 @@
+                                 SpecFile::getWustlRegionFileTag(),
+                                 specFile.wustlRegionFile);
+ 
++   trajectoryGroup = listFiles(filesLayout,
++		   	   	   	   	   	   "Electrode trajectory Files",
++							   NULL,
++							   SpecFile::getTrajectoryFileTag(),
++							   specFile.trajectoryFile);
++
++
+    QLabel* dummyLabel = new QLabel(" ");
+    filesLayout->addWidget(dummyLabel);
+    filesLayout->setStretchFactor(dummyLabel, 10000000);
+@@ -2659,6 +2667,7 @@
+                              const bool volumeFileFlag)
+ {
+    const int numRows = static_cast<int>(dataFileEntry.getNumberOfFiles());
++
+    if (numRows == 0) {
+       return NULL;
+    }
+--- a/caret_gui/GuiSpecFileDialog.h
++++ b/caret_gui/GuiSpecFileDialog.h
+@@ -470,6 +470,9 @@
+       /// group box for geodesic distance file
+       QGroupBox* geodesicGroup;
+       
++      /// group box for trajectory file
++      QGroupBox* trajectoryGroup;
++
+       /// file filter values
+       FILE_FILTER_TYPE fileFilterSelections;
+       
+--- /dev/null
++++ b/caret_gui/GuiTrajectoryToolDialog.cxx
+@@ -0,0 +1,1648 @@
++/*LICENSE_START*/
++/*
++ *  Copyright 1995-2002 Washington University School of Medicine
++ *
++ *  http://brainmap.wustl.edu
++ *
++ *  This file is part of CARET.
++ *
++ *  CARET is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  CARET is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with CARET; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
++ *
++ */
++/*LICENSE_END*/
++
++
++#include <sstream>
++#include <set>
++#include <cmath>
++
++#include <QApplication>
++#include <QCheckBox>
++#include <QLabel>
++#include <QPushButton>
++#include <QGroupBox>
++#include <QToolTip>
++#include <QValidator>
++#include <QSlider>
++#include <QHBoxLayout>
++#include <QVBoxLayout>
++#include <QColorDialog>
++#include <QMessageBox>
++#include <QInputDialog>
++#include <QObjectList>
++#include <QtDebug>
++#include <QString>
++
++#include "BrainModelVolume.h"
++#include "BrainSet.h"
++#include "DebugControl.h"
++#include "GuiBrainModelOpenGL.h"
++#include "GuiMainWindow.h"
++#include "WuQMessageBox.h"
++#include "GuiToolBar.h"
++#include "GuiTrajectoryToolDialog.h"
++#include "TrajectoryFile.h"
++#include "global_variables.h"
++#include "QtAngleSpinBox.h"
++#include "vtkMath.h"
++
++
++void dumpvec(std::string s, float *v);
++
++
++
++/**
++ * constructor.
++ */
++GuiTrajectoryToolDialog::GuiTrajectoryToolDialog(QWidget* parent, BrainSet *bs)
++   : QDialog(parent), m_brainSet(bs), m_bSuppressUpdates(false)
++{
++	QObject *pobj;
++	setWindowTitle("SPLASh");
++	QTabWidget *tabWidget = new QTabWidget;
++	tabWidget->addTab(m_tab1 = setupTab1(), "General");
++	tabWidget->addTab(m_tab2 = setupTab2(), "Path");
++	tabWidget->addTab(m_tab3 = setupTab3(), "Settings");
++
++	QVBoxLayout *vbox = new QVBoxLayout;
++	vbox->addWidget(tabWidget);
++	setLayout(vbox);
++	refreshAll();
++}
++
++QWidget* GuiTrajectoryToolDialog::setupTab1()
++{
++	QWidget *widget = new QWidget;
++	QLabel* label;
++	QHBoxLayout *row;
++	QVBoxLayout *check1, *check2;
++	QVBoxLayout *target1, *target2;
++	QVBoxLayout *buttons;
++	QVBoxLayout *tab1 = new QVBoxLayout;
++
++	// group box for electrode trajectory list
++	QGroupBox* tlistGroup = new QGroupBox("Trajectories");
++	tlistGroup->setObjectName("tlistGroup");
++
++	// list widget for trajectory names, and a slot for changed selection
++	m_listwidgetTrajectories = new QListWidget;
++	QObject::connect( m_listwidgetTrajectories, SIGNAL(currentItemChanged(QListWidgetItem*, QListWidgetItem*)), this, SLOT( slotActiveTrajectoryChanged(QListWidgetItem*, QListWidgetItem*) ));
++
++	// and buttons for manipulating the list
++	buttons = new QVBoxLayout;
++	m_pushbuttonNew = new QPushButton("New");
++	buttons->addWidget(m_pushbuttonNew);
++	QObject::connect( m_pushbuttonNew, SIGNAL( clicked() ), this, SLOT( slotNewTrajectory() ));
++	m_pushbuttonRemove = new QPushButton("Remove");
++	buttons->addWidget(m_pushbuttonRemove);
++	QObject::connect( m_pushbuttonRemove, SIGNAL( clicked() ), this, SLOT( slotRemoveTrajectory() ));
++	m_pushbuttonRename = new QPushButton("Rename");
++	buttons->addWidget(m_pushbuttonRename);
++	QObject::connect( m_pushbuttonRename, SIGNAL( clicked() ), this, SLOT( slotRenameTrajectory() ));
++
++	// make a row for the list widget and buttons
++	row = new QHBoxLayout;
++	row->addWidget(m_listwidgetTrajectories);
++	row->addLayout(buttons);
++
++	// assign the row to the list group, then add the group to the tab's vbox layout
++	tlistGroup->setLayout(row);
++	tab1->addWidget(tlistGroup);
++
++
++	// Group box for display controls
++	m_targetDisplayGroup = new QGroupBox("Display");
++	m_targetDisplayGroup->setObjectName("displayGroup");
++
++	// Put a couple of the checkboxes here
++	check1 = new QVBoxLayout;
++	check2 = new QVBoxLayout;
++
++	// display skull?
++	m_checkboxDisplaySkull = new QCheckBox("Show Skull");
++	check2->addWidget(m_checkboxDisplaySkull);
++	QObject::connect( m_checkboxDisplaySkull, SIGNAL( toggled( bool ) ), this, SLOT( slotCheckBoxDisplaySkullToggled( bool ) ) );
++
++	// display brain?
++	m_checkboxDisplayBrain = new QCheckBox("Show Brain");
++	check2->addWidget(m_checkboxDisplayBrain);
++	QObject::connect( m_checkboxDisplayBrain, SIGNAL( toggled( bool ) ), this, SLOT( slotCheckBoxDisplayBrainToggled( bool ) ) );
++
++	// display cylinder?
++	m_checkboxDisplayCylinder = new QCheckBox("Show Cylinder");
++	check1->addWidget(m_checkboxDisplayCylinder);
++	QObject::connect( m_checkboxDisplayCylinder, SIGNAL( toggled( bool ) ), this, SLOT( slotCheckBoxDisplayCylinderToggled( bool ) ) );
++
++	// display trajectory?
++	m_checkboxDisplayTrajectory = new QCheckBox("Show Trajectory");
++	check1->addWidget(m_checkboxDisplayTrajectory);
++	QObject::connect( m_checkboxDisplayTrajectory, SIGNAL( toggled( bool ) ), this, SLOT( slotCheckBoxDisplayTrajectoryToggled( bool ) ) );
++
++	// put the two checkbox vbox into a row
++	row = new QHBoxLayout;
++	row->addLayout(check1);
++	row->addLayout(check2);
++
++	// assign row to display group
++	m_targetDisplayGroup->setLayout(row);
++
++	// add display group to tab vbox
++	tab1->addWidget(m_targetDisplayGroup);
++
++
++	// Group box for target location stuff
++	m_targetNodeGroup = new QGroupBox("Target");
++
++	// Target group box has two columns
++	target1 = new QVBoxLayout;
++	target2 = new QVBoxLayout;
++
++	// Target X in second column
++	row = new QHBoxLayout;
++	label = new QLabel("Target X: ");
++	m_lineeditTargetX = new QLineEdit;
++	m_lineeditTargetX->setValidator( new QDoubleValidator( -999.0, 999.0, 2 ) );
++	row->addWidget(label);
++	row->addWidget(m_lineeditTargetX);
++	target2->addLayout(row);
++
++	// target Y in second column
++	row = new QHBoxLayout;
++	label = new QLabel("Target Y: ");
++	m_lineeditTargetY = new QLineEdit;
++	m_lineeditTargetY->setValidator( new QDoubleValidator( -999.0, 999.0, 2 ) );
++	row->addWidget(label);
++	row->addWidget(m_lineeditTargetY);
++	target2->addLayout(row);
++
++	// Target Z in second column
++	row = new QHBoxLayout;
++	label = new QLabel("Target Z: ");
++	m_lineeditTargetZ = new QLineEdit;
++	m_lineeditTargetZ->setValidator( new QDoubleValidator( -999.0, 999.0, 2 ) );
++	row->addWidget(label);
++	row->addWidget(m_lineeditTargetZ);
++	target2->addLayout(row);
++
++	// use node id checkbox
++	m_checkboxUseNodeID = new QCheckBox("Use Node ID");
++	m_checkboxUseNodeID->setObjectName("Check1");
++	QObject::connect( m_checkboxUseNodeID, SIGNAL( toggled( bool ) ), this, SLOT( slotCheckBoxToggled( bool ) ) );
++	target1->addWidget(m_checkboxUseNodeID);
++
++	// node id
++
++	row = new QHBoxLayout;
++	label = new QLabel("Node ID: ");
++	m_lineeditNodeID = new QLineEdit;
++	m_lineeditNodeID->setValidator(
++			new QIntValidator(0, m_brainSet->getActiveFiducialSurface()->getCoordinateFile()->getNumberOfCoordinates()-1) );
++	QObject::connect( m_lineeditNodeID, SIGNAL(lostFocus()), this, SLOT(slotNodeIDLostFocus()));
++	row->addWidget(label);
++	row->addWidget(m_lineeditNodeID);
++	target1->addLayout(row);
++
++	QPushButton *pushbuttonLastSelected = new QPushButton("Use Selection");
++	pushbuttonLastSelected->setObjectName("pb1");
++	QObject::connect( pushbuttonLastSelected, SIGNAL( clicked() ), this, SLOT( slotLastSelectedButtonPushed() ));
++	target1->addWidget(pushbuttonLastSelected);
++
++	// now make a row for target1 and target2, then make the row layout for target group box
++	row = new QHBoxLayout;
++	row->addLayout(target1);
++	row->addLayout(target2);
++	m_targetNodeGroup->setLayout(row);
++	tab1->addWidget(m_targetNodeGroup);
++
++
++	// Group box for trajectory stuff
++	m_trajectoryGroup = new QGroupBox("Cylinder Placement");
++
++	// layout for group box
++	QVBoxLayout *trajVBoxLayout = new QVBoxLayout;
++
++	// closest point button
++	QPushButton *pushbuttonCylinder = new QPushButton("Default Cylinder Placement");
++	pushbuttonCylinder->setObjectName("pb2");
++	trajVBoxLayout->addWidget(pushbuttonCylinder);
++	QObject::connect( pushbuttonCylinder, SIGNAL( clicked() ), this, SLOT( slotCylinderButtonPushed() ));
++
++	// angle spinboxes
++	row = new QHBoxLayout;
++	label = new QLabel("Elevation: ");
++	m_spinboxTheta = new QtAngleSpinBox(-90000, 90000, 500);
++	m_spinboxTheta->setValue(0);
++	QObject::connect( m_spinboxTheta, SIGNAL(valueChanged(int)), this, SLOT(slotThetaValueChanged(int)));
++	row->addWidget(label);
++	row->addWidget(m_spinboxTheta);
++	trajVBoxLayout->addLayout(row);
++
++	row = new QHBoxLayout;
++	label = new QLabel("Tilt: ");
++	m_spinboxPhi = new QtAngleSpinBox(-90000, 90000, 500);
++	m_spinboxPhi->setValue(0);
++	QObject::connect( m_spinboxPhi, SIGNAL(valueChanged(int)), this, SLOT(slotPhiValueChanged(int)));
++	row->addWidget(label);
++	row->addWidget(m_spinboxPhi);
++	trajVBoxLayout->addLayout(row);
++
++	// Center X
++	row = new QHBoxLayout;
++	label = new QLabel("Center X: ");
++	m_lineeditCenterX = new QLineEdit;
++	m_lineeditCenterX->setReadOnly(true);
++	row->addWidget(label);
++	row->addWidget(m_lineeditCenterX);
++	trajVBoxLayout->addLayout(row);
++
++	// Center y
++	row = new QHBoxLayout;
++	label = new QLabel("Center Y: ");
++	m_lineeditCenterY = new QLineEdit;
++	m_lineeditCenterY->setReadOnly(true);
++	row->addWidget(label);
++	row->addWidget(m_lineeditCenterY);
++	trajVBoxLayout->addLayout(row);
++
++	// center z
++	row = new QHBoxLayout;
++	label = new QLabel("Center Z: ");
++	m_lineeditCenterZ = new QLineEdit;
++	m_lineeditCenterZ->setReadOnly(true);
++	row->addWidget(label);
++	row->addWidget(m_lineeditCenterZ);
++	trajVBoxLayout->addLayout(row);
++
++	// rest angle
++	row = new QHBoxLayout;
++	label = new QLabel("Rest angle: ");
++	m_lineeditRestAngle = new QLineEdit;
++	m_lineeditRestAngle->setReadOnly(true);
++	row->addWidget(label);
++	row->addWidget(m_lineeditRestAngle);
++	trajVBoxLayout->addLayout(row);
++
++	m_trajectoryGroup->setLayout(trajVBoxLayout);
++	tab1->addWidget(m_trajectoryGroup);
++
++	widget->setLayout(tab1);
++
++	return widget;
++}
++
++QWidget* GuiTrajectoryToolDialog::setupTab2()
++{
++	QWidget *widget = new QWidget;
++	QLabel* label;
++	QHBoxLayout *row;
++	QVBoxLayout *tab2;
++	QVBoxLayout *groupLayout = new QVBoxLayout;
++	TrajectoryFile* ptf = m_brainSet->getTrajectoryFile();
++	ElectrodeTrajectoryP ep = ptf->getActiveTrajectory();
++
++	tab2 = new QVBoxLayout;
++
++	// Group box for path analysis stuff
++	QGroupBox* pathGroup = new QGroupBox("Trajectory Path Analysis");
++	pathGroup->setObjectName("pathGroup");
++
++	// path radius
++	row = new QHBoxLayout;
++	label = new QLabel("Path radius: ");
++	m_spinboxPathRadius = new QDoubleSpinBox;
++	m_spinboxPathRadius->setMinimum(0.5);
++	m_spinboxPathRadius->setMaximum(10);
++	m_spinboxPathRadius->setSingleStep(0.5);
++	m_spinboxPathRadius->setDecimals(1);
++	QObject::connect( m_spinboxPathRadius, SIGNAL(valueChanged(double)), this, SLOT(slotPathRadiusChanged(double)));
++	row->addWidget(label);
++	row->addWidget(m_spinboxPathRadius);
++	groupLayout->addLayout(row);
++
++	m_checkboxUseDepthTool = new QCheckBox("Use Depth Tool");
++	groupLayout->addWidget(m_checkboxUseDepthTool);
++	QObject::connect( m_checkboxUseDepthTool, SIGNAL( toggled( bool ) ), this, SLOT( slotCheckBoxUseDepthToolToggled( bool ) ) );
++
++	// DepthTool tolerance
++	row = new QHBoxLayout;
++	label = new QLabel("Depth tool tolerance: ");
++	m_spinboxDepthToolTolerance = new QDoubleSpinBox;
++	m_spinboxDepthToolTolerance->setMinimum(0.1);
++	m_spinboxDepthToolTolerance->setMaximum(100);
++	m_spinboxDepthToolTolerance->setSingleStep(0.1);
++	m_spinboxDepthToolTolerance->setDecimals(1);
++	QObject::connect(m_spinboxDepthToolTolerance, SIGNAL(floatValueChanged(double)), this, SLOT(slotDepthToolToleranceChanged(double)));
++	row->addWidget(label);
++	row->addWidget(m_spinboxDepthToolTolerance);
++	groupLayout->addLayout(row);
++
++	// and the slider
++	row = new QHBoxLayout;
++	m_sliderDepthTool = new QSlider(Qt::Horizontal);
++	m_sliderDepthTool->setTickInterval(10);
++	m_sliderDepthTool->setMinimum(0);
++	m_sliderDepthTool->setMaximum(100);
++	connect( m_sliderDepthTool, SIGNAL( valueChanged( int ) ), this, SLOT( slotDepthToolSliderValueChanged( int ) ) );
++	label = new QLabel("Depth(mm):");
++	m_labelDepth = new QLabel("0");
++	row->addWidget(m_sliderDepthTool);
++	row->addWidget(label);
++	groupLayout->addLayout(row);
++
++	row = new QHBoxLayout;
++	label = new QLabel("Grid orientation: ");
++	m_spinboxGridRotation = new QtAngleSpinBox(-90000, 90000, 500);
++	m_spinboxGridRotation->setValue(0);
++	QObject::connect( m_spinboxGridRotation, SIGNAL(valueChanged(int)), this, SLOT(slotGridRotationChanged(int)));
++
++	row->addWidget(label);
++	row->addWidget(m_spinboxGridRotation);
++	groupLayout->addLayout(row);
++
++
++	// grid
++	m_cylinderGridFrame = new QtCylinderGridFrame(NULL, 300, 250, 0, 0, 0.5, 0.25);
++	connect( m_cylinderGridFrame, SIGNAL(entryPointChanged(double, double)), this, SLOT( slotCylinderGridSelectionChanged(double, double)));
++	m_cylinderGridFrame->show();
++	groupLayout->addWidget(m_cylinderGridFrame);
++
++	// grid entry point
++	m_gridEntryPoint = new QLabel;
++	groupLayout->addWidget(m_gridEntryPoint);
++
++	// assign layout to group box, then group box to layout, then layout to widget
++	pathGroup->setLayout(groupLayout);
++	tab2->addWidget(pathGroup);
++	widget->setLayout(tab2);
++
++	return widget;
++}
++
++QWidget * GuiTrajectoryToolDialog::setupTab3()
++{
++	QWidget *widget = new QWidget;
++	TrajectoryFile* ptf = m_brainSet->getTrajectoryFile();
++	ElectrodeTrajectoryP ep = ptf->getActiveTrajectory();
++	QLabel* label;
++	QHBoxLayout *row;
++	QVBoxLayout *tab3;
++
++	tab3 = new QVBoxLayout;
++
++	// Group box for colors et al
++	QGroupBox* settings = new QGroupBox("Colors");
++	QVBoxLayout *vboxGroup = new QVBoxLayout;
++
++	// path radius
++	row = new QHBoxLayout;
++	row->addWidget(new QLabel("Skull surface color: "));
++	m_labelSkullSurfaceColor = new QLabel;
++	m_labelSkullSurfaceColor->setScaledContents(true);
++	row->addWidget(m_labelSkullSurfaceColor);
++	QPushButton *pushbuttonSkullSurface = new QPushButton("Edit");
++	row->addWidget(pushbuttonSkullSurface);
++	QObject::connect( pushbuttonSkullSurface, SIGNAL( clicked() ), this, SLOT( slotEditSkullSurfaceColor() ));
++	vboxGroup->addLayout(row);
++
++	row = new QHBoxLayout;
++	row->addWidget(new QLabel("Skull annulus color: "));
++	m_labelSkullSurfaceAnnulusColor = new QLabel;
++	m_labelSkullSurfaceAnnulusColor->setScaledContents(true);
++	row->addWidget(m_labelSkullSurfaceAnnulusColor);
++	QPushButton *pushbuttonSkullSurfaceAnnulus = new QPushButton("Edit");
++	QObject::connect( pushbuttonSkullSurfaceAnnulus, SIGNAL( clicked() ), this, SLOT( slotEditSkullSurfaceAnnulusColor() ));
++	row->addWidget(pushbuttonSkullSurfaceAnnulus);
++	vboxGroup->addLayout(row);
++
++	row = new QHBoxLayout;
++	row->addWidget(new QLabel("Brain surface color: "));
++	m_labelBrainSurfaceColor = new QLabel;
++	m_labelBrainSurfaceColor->setScaledContents(true);
++	row->addWidget(m_labelBrainSurfaceColor);
++	QPushButton *pushbuttonBrainSurface = new QPushButton("Edit");
++	row->addWidget(pushbuttonBrainSurface);
++	QObject::connect( pushbuttonBrainSurface, SIGNAL( clicked() ), this, SLOT( slotEditBrainSurfaceColor() ));
++	vboxGroup->addLayout(row);
++
++	row = new QHBoxLayout;
++	row->addWidget(new QLabel("Cylinder sides color: "));
++	m_labelCylinderSidesColor = new QLabel;
++	m_labelCylinderSidesColor->setScaledContents(true);
++	row->addWidget(m_labelCylinderSidesColor);
++	QPushButton *pushbuttonCylinderSides = new QPushButton("Edit");
++	QObject::connect( pushbuttonCylinderSides, SIGNAL( clicked() ), this, SLOT( slotEditCylinderSidesColor() ));
++	row->addWidget(pushbuttonCylinderSides);
++	vboxGroup->addLayout(row);
++
++	row = new QHBoxLayout;
++	row->addWidget(new QLabel("Cylinder ends color: "));
++	m_labelCylinderEndsColor = new QLabel;
++	m_labelCylinderEndsColor->setScaledContents(true);
++	row->addWidget(m_labelCylinderEndsColor);
++	QPushButton *pushbuttonCylinderEnds = new QPushButton("Edit");
++	QObject::connect( pushbuttonCylinderEnds, SIGNAL( clicked() ), this, SLOT( slotEditCylinderEndsColor() ));
++	row->addWidget(pushbuttonCylinderEnds);
++	vboxGroup->addLayout(row);
++
++	row = new QHBoxLayout;
++	row->addWidget(new QLabel("Path line color: "));
++	m_labelPathLineColor = new QLabel;
++	m_labelPathLineColor->setScaledContents(true);
++	row->addWidget(m_labelPathLineColor);
++	QPushButton *pushbuttonPathLine = new QPushButton("Edit");
++	QObject::connect( pushbuttonPathLine, SIGNAL( clicked() ), this, SLOT( slotEditPathLineColor() ));
++	row->addWidget(pushbuttonPathLine);
++	vboxGroup->addLayout(row);
++
++	row = new QHBoxLayout;
++	row->addWidget(new QLabel("Path markers color: "));
++	m_labelPathMarkersColor = new QLabel;
++	m_labelPathMarkersColor->setScaledContents(true);
++	row->addWidget(m_labelPathMarkersColor);
++	QPushButton *pushbuttonPathMarkers = new QPushButton("Edit");
++	QObject::connect( pushbuttonPathMarkers, SIGNAL( clicked() ), this, SLOT( slotEditPathMarkersColor() ));
++	row->addWidget(pushbuttonPathMarkers);
++	vboxGroup->addLayout(row);
++
++	row = new QHBoxLayout;
++	row->addWidget(new QLabel("Flat map nodes color: "));
++	m_labelFlatMapNodesColor = new QLabel;
++	m_labelFlatMapNodesColor->setScaledContents(true);
++	row->addWidget(m_labelFlatMapNodesColor);
++	QPushButton *pushbuttonFlatMapNodes = new QPushButton("Edit");
++	QObject::connect( pushbuttonFlatMapNodes, SIGNAL( clicked() ), this, SLOT( slotEditFlatMapNodesColor() ));
++	row->addWidget(pushbuttonFlatMapNodes);
++	vboxGroup->addLayout(row);
++
++	row = new QHBoxLayout;
++	row->addWidget(new QLabel("Volume nodes color: "));
++	m_labelVolumeNodesColor = new QLabel;
++	m_labelVolumeNodesColor->setScaledContents(true);
++	row->addWidget(m_labelVolumeNodesColor);
++	QPushButton *pushbuttonVolumeNodes = new QPushButton("Edit");
++	QObject::connect( pushbuttonVolumeNodes, SIGNAL( clicked() ), this, SLOT( slotEditVolumeNodesColor() ));
++	row->addWidget(pushbuttonVolumeNodes);
++	vboxGroup->addLayout(row);
++
++	settings->setLayout(vboxGroup);
++	tab3->addWidget(settings);
++
++	// Group box for cylinder dimensions
++	QGroupBox* cylinderGroup = new QGroupBox("Cylinder");
++	vboxGroup = new QVBoxLayout;
++
++	// Cylinder ID
++	row = new QHBoxLayout;
++	label = new QLabel("Cylinder I.D.: ");
++	m_lineeditCylinderID = new QLineEdit;
++	m_lineeditCylinderID->setValidator( new QDoubleValidator( 0.1, 100.0, 2 ) );
++	QObject::connect( m_lineeditCylinderID, SIGNAL(textChanged(const QString &)), this, SLOT(slotCylinderIDTextChanged(const QString &)));
++	row->addWidget(label);
++	row->addWidget(m_lineeditCylinderID);
++	vboxGroup->addLayout(row);
++
++	// Cylinder OD
++	row = new QHBoxLayout;
++	label = new QLabel("Cylinder O.D.: ");
++	m_lineeditCylinderOD = new QLineEdit;
++	m_lineeditCylinderOD->setValidator( new QDoubleValidator( 0.1, 100.0, 2 ) );
++	QObject::connect( m_lineeditCylinderOD, SIGNAL(textChanged(const QString &)), this, SLOT(slotCylinderODTextChanged(const QString &)));
++	row->addWidget(label);
++	row->addWidget(m_lineeditCylinderOD);
++	vboxGroup->addLayout(row);
++
++	// Cylinder H
++	row = new QHBoxLayout;
++	label = new QLabel("Cylinder H: ");
++	m_lineeditCylinderH = new QLineEdit;
++	m_lineeditCylinderH->setValidator( new QDoubleValidator( 0.1, 100.0, 2 ) );
++	QObject::connect( m_lineeditCylinderH, SIGNAL(textChanged(const QString &)), this, SLOT(slotCylinderHTextChanged(const QString &)));
++	row->addWidget(label);
++	row->addWidget(m_lineeditCylinderH);
++	vboxGroup->addLayout(row);
++
++	// Max penetration depth
++	row = new QHBoxLayout;
++	label = new QLabel("Max Penetration (mm): ");
++	m_spinboxMaxPenetrationDepth = new QSpinBox;
++	m_spinboxMaxPenetrationDepth->setMinimum(1);
++	m_spinboxMaxPenetrationDepth->setMaximum(100);
++	m_spinboxMaxPenetrationDepth->setSingleStep(1);
++	QObject::connect( m_spinboxMaxPenetrationDepth, SIGNAL(valueChanged(int)), this, SLOT(slotMaxPenetrationDepthChanged(int)));
++	row->addWidget(label);
++	row->addWidget(m_spinboxMaxPenetrationDepth);
++	vboxGroup->addLayout(row);
++	cylinderGroup->setLayout(vboxGroup);
++	tab3->addWidget(cylinderGroup);
++
++	// Group box for etcetera
++	QGroupBox* etcGroup = new QGroupBox("Misc");
++	vboxGroup = new QVBoxLayout;
++
++	// Nearby diam
++	row = new QHBoxLayout;
++	label = new QLabel("Skull nearby diam: ");
++	m_lineeditSkullNearbyD = new QLineEdit;
++	m_lineeditSkullNearbyD->setValidator( new QDoubleValidator( 0.1, 100.0, 2, m_lineeditSkullNearbyD ) );
++	QObject::connect( m_lineeditSkullNearbyD, SIGNAL(textChanged(const QString &)), this, SLOT(slotSkullNearbyDTextChanged(const QString &)));
++	row->addWidget(label);
++	row->addWidget(m_lineeditSkullNearbyD);
++	vboxGroup->addLayout(row);
++	etcGroup->setLayout(vboxGroup);
++	tab3->addWidget(etcGroup);
++
++	widget->setLayout(tab3);
++	//addTab(tab3, "Settings");
++	return widget;
++}
++
++void GuiTrajectoryToolDialog::slotActiveTrajectoryChanged(QListWidgetItem* current, QListWidgetItem* previous)
++{
++	if (m_bSuppressUpdates) return;
++
++	TrajectoryFile* ptf = m_brainSet->getTrajectoryFile();
++	std::string s(current->text().toStdString());
++	if (!ptf->setActiveTrajectory(s))
++	{
++		QMessageBox::critical(this, "Active Trajectory", QString("Cannot set active trajectory - name not found (%1).").arg(s.c_str()),
++			QMessageBox::Ok, QMessageBox::NoButton, QMessageBox::NoButton);
++	}
++	else
++	{
++		refreshTrajectory();
++//		updateItems();
++		// re-draw surfaces
++		theMainWindow->getBrainModelOpenGL()->updateAllGL();
++	}
++
++}
++
++void GuiTrajectoryToolDialog::slotNewTrajectory()
++{
++
++	TrajectoryFile* ptf = m_brainSet->getTrajectoryFile();
++	bool ok;
++	QString text = QInputDialog::getText(this, "New Trajectory", "Trajectory name:", QLineEdit::Normal, QString::null, &ok);
++	if ( ok && !text.isEmpty() )
++	{
++		ElectrodeTrajectoryP ep(new ElectrodeTrajectory());
++		ep->setName(std::string(text.toStdString()));
++		if (ptf->getTrajectories().addTrajectory(ep))
++		{
++			if (ptf->getActiveTrajectory() == NULL)
++			{
++				// this will actually end up disabling almost all widgets, despite the name.
++				enableWidgets();
++			}
++			ptf->setActiveTrajectory(ep->getName());
++			QListWidgetItem *item =new QListWidgetItem(text, m_listwidgetTrajectories);
++			m_listwidgetTrajectories->setCurrentItem(item);
++			refreshTrajectory();
++
++			// re-draw surfaces
++			theMainWindow->getBrainModelOpenGL()->updateAllGL();
++		}
++		else
++		{
++			QMessageBox::warning(this, "New Trajectory", "Cannot add trajectory - duplicate name.",
++				QMessageBox::Ok, QMessageBox::NoButton, QMessageBox::NoButton);
++		}
++	}
++}
++
++void GuiTrajectoryToolDialog::slotRemoveTrajectory()
++{
++	TrajectoryFile* ptf = m_brainSet->getTrajectoryFile();
++	ElectrodeTrajectoryP ep = ptf->getActiveTrajectory();
++	if (ep)	ptf->removeTrajectory(ep->getName());
++
++	// Have to make another trajectory the active trajectory.
++	ElectrodeTrajectoryMapConstIterator it = ptf->getTrajectories().begin();
++	if (it == ptf->getTrajectories().end())
++	{
++		// No more trajectories - have to handle this@!!!!!!
++		ptf->setActiveTrajectory("");
++	}
++	else
++	{
++		ptf->setActiveTrajectory(it->first);
++	}
++	refreshAll();
++	//updateItems();
++}
++
++void GuiTrajectoryToolDialog::slotRenameTrajectory()
++{
++	TrajectoryFile* ptf = m_brainSet->getTrajectoryFile();
++	ElectrodeTrajectoryP ep = ptf->getActiveTrajectory();
++	bool ok;
++	if (ep.get())
++	{
++		QString text = QInputDialog::getText(
++				this,
++				"Rename Trajectory",
++				"Trajectory name:",
++				QLineEdit::Normal,
++				QString::null,
++				&ok);
++		if ( ok && !text.isEmpty() )
++		{
++			// remove the trajectory, change its name, then add it again.
++			ptf->removeTrajectory(ep->getName());
++			ep->setName(std::string(text.toStdString()));
++			ptf->addTrajectory(ep);
++			ptf->setActiveTrajectory(ep->getName());
++			//updateItems();
++			refreshTrajectory();
++		}
++	}
++	else
++	{
++		QMessageBox::critical(this, "Rename Trajectory", "Cannot rename trajectory - not found!",
++			QMessageBox::Ok, QMessageBox::NoButton, QMessageBox::NoButton);
++	}
++}
++
++
++void GuiTrajectoryToolDialog::slotCylinderGridSelectionChanged(double x, double y)
++{
++	if (m_bSuppressUpdates) return;
++
++	TrajectoryFile* ptf = m_brainSet->getTrajectoryFile();
++	ElectrodeTrajectoryP ep = ptf->getActiveTrajectory();
++	if (!ep) return;
++
++	ep->setGridEntry((float)x, (float)y);
++
++	ptf->entryPointChanged(ep);
++
++	refreshTrajectory();
++
++	// Now change cursor position in volume/MRI images.
++	updateSelectedVolumeSlices();
++
++	// Mark the file modified
++	ptf->setModified();
++
++	// re-draw surfaces
++	theMainWindow->getBrainModelOpenGL()->updateAllGL();
++
++}
++
++
++void
++GuiTrajectoryToolDialog::slotEditBrainSurfaceColor()
++{
++	TrajectoryFile* ptf = m_brainSet->getTrajectoryFile();
++	ElectrodeTrajectoryP ep = ptf->getActiveTrajectory();
++	if (!ep) return;
++	QColor c = QColorDialog::getColor( ptf->getBrainSurfaceColor(), this );
++  if ( c.isValid() )
++  {
++  	ptf->setBrainSurfaceColor(c);
++		QPixmap pixmap(10, 10);
++		pixmap.fill(c);
++		m_labelBrainSurfaceColor->setPixmap(pixmap);
++
++		// Mark the file modified
++		ptf->setModified();
++  }
++}
++
++void
++GuiTrajectoryToolDialog::slotEditSkullSurfaceColor()
++{
++	TrajectoryFile* ptf = m_brainSet->getTrajectoryFile();
++	ElectrodeTrajectoryP ep = ptf->getActiveTrajectory();
++	if (!ep) return;
++	QColor c = QColorDialog::getColor( ep->getSkullSurfaceColor(), this );
++   if ( c.isValid() )
++   {
++   	ep->setSkullSurfaceColor(c);
++		QPixmap pixmap(10, 10);
++		pixmap.fill(c);
++		m_labelSkullSurfaceColor->setPixmap(pixmap);
++
++		// Mark the file modified
++		ptf->setModified();
++   }
++}
++
++void
++GuiTrajectoryToolDialog::slotEditSkullSurfaceAnnulusColor()
++{
++	TrajectoryFile* ptf = m_brainSet->getTrajectoryFile();
++	ElectrodeTrajectoryP ep = ptf->getActiveTrajectory();
++	if (!ep) return;
++	QColor c = QColorDialog::getColor( ep->getSkullSurfaceAnnulusColor(), this );
++   if ( c.isValid() )
++   {
++   	ep->setSkullSurfaceAnnulusColor(c);
++		QPixmap pixmap(10, 10);
++		pixmap.fill(c);
++		m_labelSkullSurfaceAnnulusColor->setPixmap(pixmap);
++
++		// Mark the file modified
++		ptf->setModified();
++   }
++}
++
++void
++GuiTrajectoryToolDialog::slotEditCylinderSidesColor()
++{
++	TrajectoryFile* ptf = m_brainSet->getTrajectoryFile();
++	ElectrodeTrajectoryP ep = ptf->getActiveTrajectory();
++	if (!ep) return;
++	QColor c = QColorDialog::getColor( ep->getCylinderSidesColor(), this );
++   if ( c.isValid() )
++   {
++   	ep->setCylinderSidesColor(c);
++		QPixmap pixmap(10, 10);
++		pixmap.fill(c);
++		m_labelCylinderSidesColor->setPixmap(pixmap);
++
++		// Mark the file modified
++		ptf->setModified();
++   }
++}
++
++void
++GuiTrajectoryToolDialog::slotEditCylinderEndsColor()
++{
++	TrajectoryFile* ptf = m_brainSet->getTrajectoryFile();
++	ElectrodeTrajectoryP ep = ptf->getActiveTrajectory();
++	if (!ep) return;
++	QColor c = QColorDialog::getColor( ep->getCylinderEndsColor(), this );
++   if ( c.isValid() )
++   {
++   	ep->setCylinderEndsColor(c);
++		QPixmap pixmap(10, 10);
++		pixmap.fill(c);
++		m_labelCylinderEndsColor->setPixmap(pixmap);
++
++		// Mark the file modified
++		ptf->setModified();
++   }
++}
++
++void
++GuiTrajectoryToolDialog::slotEditPathLineColor()
++{
++	TrajectoryFile* ptf = m_brainSet->getTrajectoryFile();
++	ElectrodeTrajectoryP ep = ptf->getActiveTrajectory();
++	if (!ep) return;
++	QColor c = QColorDialog::getColor( ep->getPathLineColor(), this );
++   if ( c.isValid() )
++   {
++   	ep->setPathLineColor(c);
++		QPixmap pixmap(10, 10);
++		pixmap.fill(c);
++		m_labelPathLineColor->setPixmap(pixmap);
++
++		// Mark the file modified
++		ptf->setModified();
++   }
++}
++
++void
++GuiTrajectoryToolDialog::slotEditPathMarkersColor()
++{
++	TrajectoryFile* ptf = m_brainSet->getTrajectoryFile();
++	ElectrodeTrajectoryP ep = ptf->getActiveTrajectory();
++	if (!ep) return;
++	QColor c = QColorDialog::getColor( ep->getPathMarkersColor(), this );
++   if ( c.isValid() )
++   {
++   	ep->setPathMarkersColor(c);
++		QPixmap pixmap(10, 10);
++		pixmap.fill(c);
++		m_labelPathMarkersColor->setPixmap(pixmap);
++
++		// Mark the file modified
++		ptf->setModified();
++   }
++}
++
++
++
++
++void
++GuiTrajectoryToolDialog::slotEditFlatMapNodesColor()
++{
++	TrajectoryFile* ptf = m_brainSet->getTrajectoryFile();
++	ElectrodeTrajectoryP ep = ptf->getActiveTrajectory();
++	if (!ep) return;
++	QColor c = QColorDialog::getColor( ep->getFlatMapNodesColor(), this );
++   if ( c.isValid() )
++   {
++   	ep->setFlatMapNodesColor(c);
++		QPixmap pixmap(10, 10);
++		pixmap.fill(c);
++		m_labelFlatMapNodesColor->setPixmap(pixmap);
++
++		// Mark the file modified
++		ptf->setModified();
++   }
++}
++
++void
++GuiTrajectoryToolDialog::slotEditVolumeNodesColor()
++{
++	TrajectoryFile* ptf = m_brainSet->getTrajectoryFile();
++	ElectrodeTrajectoryP ep = ptf->getActiveTrajectory();
++	if (!ep) return;
++	QColor c = QColorDialog::getColor( ep->getVolumeNodesColor(), this );
++   if ( c.isValid() )
++   {
++   	ep->setVolumeNodesColor(c);
++		QPixmap pixmap(10, 10);
++		pixmap.fill(c);
++		m_labelVolumeNodesColor->setPixmap(pixmap);
++
++		// Mark the file modified
++		ptf->setModified();
++   }
++}
++
++
++
++/**
++ * destructor.
++ */
++GuiTrajectoryToolDialog::~GuiTrajectoryToolDialog()
++{
++}
++
++
++
++
++
++
++
++
++
++
++
++
++/**
++ * called to display the dialog.
++ */
++#if 0
++void
++GuiTrajectoryToolDialog::show()
++{
++//	updateItems();
++   QTabDialog::show();
++}
++#endif
++
++/**
++ * called to close the dialog.
++ */
++void
++GuiTrajectoryToolDialog::close()
++{
++   QDialog::close();
++}
++
++void GuiTrajectoryToolDialog::slotCheckBoxToggled(bool on)
++{
++	TrajectoryFile* ptf = m_brainSet->getTrajectoryFile();
++	ElectrodeTrajectoryP ep = ptf->getActiveTrajectory();
++	if (!ep) return;
++	if (m_bSuppressUpdates) return;
++
++	ep->setUseNodeID(on);
++
++	// Mark the file modified
++	ptf->setModified();
++}
++
++
++
++void GuiTrajectoryToolDialog::slotCheckBoxDisplayBrainToggled(bool on)
++{
++	TrajectoryFile* ptf = m_brainSet->getTrajectoryFile();
++	ElectrodeTrajectoryP ep = ptf->getActiveTrajectory();
++	if (!ep) return;
++	if (m_bSuppressUpdates) return;
++
++	ep->setDisplayBrain(on);
++	theMainWindow->getBrainModelOpenGL()->updateAllGL();
++
++	// Mark the file modified
++	ptf->setModified();
++}
++
++
++void GuiTrajectoryToolDialog::slotCheckBoxDisplaySkullToggled(bool on)
++{
++	TrajectoryFile* ptf = m_brainSet->getTrajectoryFile();
++	ElectrodeTrajectoryP ep = ptf->getActiveTrajectory();
++	if (!ep) return;
++	if (m_bSuppressUpdates) return;
++
++	ep->setDisplaySkull(on);
++	theMainWindow->getBrainModelOpenGL()->updateAllGL();
++
++	// Mark the file modified
++	ptf->setModified();
++}
++
++void GuiTrajectoryToolDialog::slotCheckBoxDisplayCylinderToggled(bool on)
++{
++	TrajectoryFile* ptf = m_brainSet->getTrajectoryFile();
++	ElectrodeTrajectoryP ep = ptf->getActiveTrajectory();
++	if (!ep) return;
++	if (m_bSuppressUpdates) return;
++
++	ep->setDisplayCylinder(on);
++	theMainWindow->getBrainModelOpenGL()->updateAllGL();
++
++	// Mark the file modified
++	ptf->setModified();
++}
++
++void GuiTrajectoryToolDialog::slotCheckBoxDisplayTrajectoryToggled(bool on)
++{
++	TrajectoryFile* ptf = m_brainSet->getTrajectoryFile();
++	ElectrodeTrajectoryP ep = ptf->getActiveTrajectory();
++	if (!ep) return;
++	if (m_bSuppressUpdates) return;
++
++	ep->setDisplayTrajectory(on);
++	theMainWindow->getBrainModelOpenGL()->updateAllGL();
++
++	// Mark the file modified
++	ptf->setModified();
++}
++
++void GuiTrajectoryToolDialog::slotCheckBoxUseDepthToolToggled(bool on)
++{
++	TrajectoryFile* ptf = m_brainSet->getTrajectoryFile();
++	ElectrodeTrajectoryP ep = ptf->getActiveTrajectory();
++	if (!ep) return;
++	if (m_bSuppressUpdates) return;
++
++	ep->setUseDepthTool(on);
++	refreshTrajectory();
++	theMainWindow->getBrainModelOpenGL()->updateAllGL();
++
++	// Mark the file modified
++	ptf->setModified();
++}
++
++/**
++ * called when place cylinder push button is pushed. This will use the current target point and
++ * find the point on the skull surface nearest to the target.
++ */
++void
++GuiTrajectoryToolDialog::slotCylinderButtonPushed()
++{
++	TrajectoryFile* ptf = m_brainSet->getTrajectoryFile();
++	ElectrodeTrajectoryP ep = ptf->getActiveTrajectory();
++	if (!ep) return;
++
++	ptf->targetPositionChanged(ep);
++	refreshTrajectory();
++
++	// re-draw surfaces
++	theMainWindow->getBrainModelOpenGL()->updateAllGL();
++
++	// Mark the file modified
++	ptf->setModified();
++}
++
++/**
++ * called when place cylinder push button is pushed
++ */
++void
++GuiTrajectoryToolDialog::slotLastSelectedButtonPushed()
++{
++	TrajectoryFile* ptf = m_brainSet->getTrajectoryFile();
++	ElectrodeTrajectoryP ep = ptf->getActiveTrajectory();
++	if (!ep) return;
++
++	// Lets see if we can get the coords of the currently selected node.....
++	GuiBrainModelOpenGL* brainModelOpenGL = theMainWindow->getBrainModelOpenGL();
++	BrainModelOpenGLSelectedItem node = GuiBrainModelOpenGL::getOpenGLDrawing()->getSelectedNode();
++
++	if (node.getItemIndex1() < 0)
++	{
++		WuQMessageBox::information(this, "No Node Selected", "You must select a target node.");
++	}
++	else
++	{
++		ep->setUseNodeID(true);
++		ep->setNodeID(node.getItemIndex1());
++		ptf->nodeIDChanged(ep);			// THIS triggers update chain
++
++		// clear node ID symbols from GL display
++		m_brainSet->clearNodeHighlightSymbols();
++
++		// refresh stuff in dialog
++		ptf->targetPositionChanged(ep);
++		refreshTrajectory();
++
++		// re-draw surfaces
++		theMainWindow->getBrainModelOpenGL()->updateAllGL();
++
++		// Mark the file modified
++		ptf->setModified();
++	}
++}
++
++void GuiTrajectoryToolDialog::slotDepthToolSliderValueChanged(int newValue)
++{
++	TrajectoryFile* ptf = NULL;
++	ElectrodeTrajectoryP ep;
++
++	if (m_bSuppressUpdates) return;
++
++	ptf = m_brainSet->getTrajectoryFile();
++	ep = ptf->getActiveTrajectory();
++	if (!ep) return;
++	ep->setDepthToolDepthPct(newValue);
++
++	// Now change cursor position in volume/MRI images.
++	updateSelectedVolumeSlices();
++
++	// update traj dialog
++	refreshTrajectory();
++
++	// Now update graphics
++	theMainWindow->getBrainModelOpenGL()->updateAllGL();
++
++	// Mark the file modified
++	ptf->setModified();
++}
++
++void GuiTrajectoryToolDialog::updateSelectedVolumeSlices()
++{
++	int ijk[3];
++	int i;
++	TrajectoryFile* ptf = NULL;
++	ElectrodeTrajectoryP ep;
++	BrainModelVolume* bmv = NULL;
++	ptf = m_brainSet->getTrajectoryFile();
++	ep = ptf->getActiveTrajectory();
++	if (!ep) return;
++
++	// don't update volume cursor unless depth tool is active
++	if (!ep->getUseDepthTool()) return;
++
++	// Now change cursor position in volume/MRI images.
++	bmv = m_brainSet->getBrainModelVolume(-1);
++	if (bmv)
++	{
++		float origin[3];
++		float spacing[3];
++		double ppt[3];
++		VolumeFile *vf = bmv->getUnderlayVolumeFile();
++		vf->getOrigin(origin);
++		vf->getSpacing(spacing);
++
++		// Determine the location of the slider, then get the volume slices
++		ep->getPenetrationPosition(ppt);
++		for (i=0; i<3; i++)
++		{
++			ijk[i] = (int)((ppt[i] - origin[i])/spacing[i]);
++		}
++
++		for (i=0; i<BrainModel::NUMBER_OF_BRAIN_MODEL_VIEW_WINDOWS; i++)
++		{
++			bmv->setSelectedOrthogonalSlices(i, ijk);
++			GuiToolBar::updateAllToolBars(false);
++		}
++	}
++	return;
++}
++
++
++/**
++ * called when target node text changes
++ */
++void GuiTrajectoryToolDialog::slotNodeIDTextChanged(const QString &t)
++{
++	TrajectoryFile* ptf = m_brainSet->getTrajectoryFile();
++	ElectrodeTrajectoryP ep = ptf->getActiveTrajectory();
++	if (!ep) return;
++	if (m_bSuppressUpdates) return;
++	ep->setNodeID(t.toInt());
++
++	// make necessary changes to trajectory
++	ptf->nodeIDChanged(ep);
++
++	// refresh
++	refreshTrajectory();
++
++	// Now update graphics
++	theMainWindow->getBrainModelOpenGL()->updateAllGL();
++
++	// Mark the file modified
++	ptf->setModified();
++}
++
++
++/**
++ * called when target nodeID LineEdit widget loses focus
++ */
++void GuiTrajectoryToolDialog::slotNodeIDLostFocus()
++{
++	TrajectoryFile* ptf = m_brainSet->getTrajectoryFile();
++	ElectrodeTrajectoryP ep = ptf->getActiveTrajectory();
++	if (!ep) return;
++	if (m_bSuppressUpdates) return;
++	ep->setNodeID(m_lineeditNodeID->text().toInt());
++
++	// make necessary changes to trajectory
++	ptf->nodeIDChanged(ep);
++
++	// refresh
++	refreshTrajectory();
++
++	// Now update graphics
++	theMainWindow->getBrainModelOpenGL()->updateAllGL();
++
++	// Mark the file modified
++	ptf->setModified();
++}
++
++
++
++/**
++ * called when path radius text changes
++ */
++
++void GuiTrajectoryToolDialog::slotPathRadiusChanged(double val)
++{
++	if (m_bSuppressUpdates) return;
++
++	TrajectoryFile* ptf = m_brainSet->getTrajectoryFile();
++	ElectrodeTrajectoryP ep = ptf->getActiveTrajectory();
++	if (!ep) return;
++
++	ep->setPathRadius(val);
++	ptf->pathNodesChanged(ep);
++
++	// re-draw surfaces
++	theMainWindow->getBrainModelOpenGL()->updateAllGL();
++
++	// Mark the file modified
++	ptf->setModified();
++}
++
++/*
++ * Called when grid rotation spinbox changes
++ */
++
++void GuiTrajectoryToolDialog::slotGridRotationChanged(int value)
++{
++	if (m_bSuppressUpdates) return;
++
++	TrajectoryFile* ptf = m_brainSet->getTrajectoryFile();
++	ElectrodeTrajectoryP ep = ptf->getActiveTrajectory();
++	if (!ep) return;
++
++	ep->setGridRotation((float)value/1000.0f);
++	ptf->entryPointChanged(ep);
++
++	// Now change cursor position in volume/MRI images.
++	updateSelectedVolumeSlices();
++
++	// Update views
++	theMainWindow->getBrainModelOpenGL()->updateAllGL();
++
++	// refresh
++	refreshTrajectory();
++
++	// Mark the file modified
++	ptf->setModified();
++}
++
++
++/**
++ * called when depth tool tolerance text changes
++ */
++
++void GuiTrajectoryToolDialog::slotDepthToolToleranceChanged(double val)
++{
++	if (m_bSuppressUpdates) return;
++
++	TrajectoryFile* ptf = m_brainSet->getTrajectoryFile();
++	ElectrodeTrajectoryP ep = ptf->getActiveTrajectory();
++	if (!ep) return;
++	ep->setDepthToolTolerance(val);
++//	updateItems();
++
++	theMainWindow->getBrainModelOpenGL()->updateAllGL();
++
++	// Mark the file modified
++	ptf->setModified();
++}
++
++
++/**
++ * called when cylinderID text changes
++ */
++
++void GuiTrajectoryToolDialog::slotCylinderIDTextChanged(const QString &t)
++{
++	if (m_bSuppressUpdates) return;
++
++	TrajectoryFile* ptf = m_brainSet->getTrajectoryFile();
++	ElectrodeTrajectoryP ep = ptf->getActiveTrajectory();
++	if (!ep) return;
++	ep->setCylinderID(t.toInt());
++//	updateItems();
++
++	ptf->cylinderPositionChanged(ep);
++
++	refreshTrajectory();
++
++	// Mark the file modified
++	ptf->setModified();
++
++	theMainWindow->getBrainModelOpenGL()->updateAllGL();
++}
++
++/**
++ * called when cylinderOD text changes
++ */
++
++void GuiTrajectoryToolDialog::slotCylinderODTextChanged(const QString &t)
++{
++	if (m_bSuppressUpdates) return;
++
++	TrajectoryFile* ptf = m_brainSet->getTrajectoryFile();
++	ElectrodeTrajectoryP ep = ptf->getActiveTrajectory();
++	if (!ep) return;
++	ep->setCylinderOD(t.toInt());
++	//updateItems();
++
++	ptf->cylinderPositionChanged(ep);
++
++	refreshTrajectory();
++
++	// Mark the file modified
++	ptf->setModified();
++
++	theMainWindow->getBrainModelOpenGL()->updateAllGL();
++}
++
++/**
++ * called when cylinderH text changes
++ */
++
++void GuiTrajectoryToolDialog::slotCylinderHTextChanged(const QString &t)
++{
++	if (m_bSuppressUpdates) return;
++
++	TrajectoryFile* ptf = m_brainSet->getTrajectoryFile();
++	ElectrodeTrajectoryP ep = ptf->getActiveTrajectory();
++	if (!ep) return;
++	ep->setCylinderH(t.toInt());
++//	updateItems();
++
++	// Mark the file modified
++	ptf->setModified();
++
++	theMainWindow->getBrainModelOpenGL()->updateAllGL();
++}
++
++
++void GuiTrajectoryToolDialog::slotMaxPenetrationDepthChanged(int val)
++{
++	if (m_bSuppressUpdates) return;
++
++	TrajectoryFile* ptf = m_brainSet->getTrajectoryFile();
++	ElectrodeTrajectoryP ep = ptf->getActiveTrajectory();
++	if (!ep) return;
++	ep->setMaxPenetrationDepth(val);
++
++	// Update GL. Affected nodes will be updated by the draw.
++	theMainWindow->getBrainModelOpenGL()->updateAllGL();
++
++	// Mark the file modified
++	ptf->setModified();
++}
++
++/**
++ * called when SkullNearbyD text changes
++ */
++
++void GuiTrajectoryToolDialog::slotSkullNearbyDTextChanged(const QString &t)
++{
++	if (m_bSuppressUpdates) return;
++
++	TrajectoryFile* ptf = m_brainSet->getTrajectoryFile();
++	ElectrodeTrajectoryP ep = ptf->getActiveTrajectory();
++	if (!ep) return;
++	ep->setSkullNearbyD(t.toDouble());
++//	updateItems();
++
++	ptf->cylinderPositionChanged(ep);
++
++	refreshTrajectory();
++
++	// Mark the file modified
++	ptf->setModified();
++	theMainWindow->getBrainModelOpenGL()->updateAllGL();
++}
++
++
++void GuiTrajectoryToolDialog::slotThetaValueChanged(int value)
++{
++	if (m_bSuppressUpdates) return;
++
++	TrajectoryFile* ptf = m_brainSet->getTrajectoryFile();
++	ElectrodeTrajectoryP ep = ptf->getActiveTrajectory();
++	if (!ep) return;
++
++	ep->setTheta((float)value/1000.0f);
++	ptf->trajectoryAnglesChanged(ep);
++	updateSelectedVolumeSlices();
++	theMainWindow->getBrainModelOpenGL()->updateAllGL();
++
++	// refresh
++	refreshTrajectory();
++
++	// Mark the file modified
++	ptf->setModified();
++}
++
++void GuiTrajectoryToolDialog::slotPhiValueChanged(int value)
++{
++	if (m_bSuppressUpdates) return;
++
++	TrajectoryFile* ptf = m_brainSet->getTrajectoryFile();
++	ElectrodeTrajectoryP ep = ptf->getActiveTrajectory();
++	if (!ep) return;
++
++	ep->setPhi((float)value/1000.0f);
++
++	ptf->trajectoryAnglesChanged(ep);
++	updateSelectedVolumeSlices();
++	theMainWindow->getBrainModelOpenGL()->updateAllGL();
++
++	// refresh
++	refreshTrajectory();
++
++	// Mark the file modified
++	ptf->setModified();
++}
++
++
++
++void GuiTrajectoryToolDialog::refreshColors()
++{
++	TrajectoryFile* ptf = m_brainSet->getTrajectoryFile();
++	ElectrodeTrajectoryP ep = ptf->getActiveTrajectory();
++	QColor color(0, 0, 0);
++
++	QPixmap pixmap(10, 10);
++
++	if (ep) color = ep->getSkullSurfaceColor();
++	pixmap.fill(color);
++	m_labelSkullSurfaceColor->setPixmap(pixmap);
++
++	if (ep) color = ep->getSkullSurfaceAnnulusColor();
++	pixmap.fill(color);
++	m_labelSkullSurfaceAnnulusColor->setPixmap(pixmap);
++
++	if (ep) color = ptf->getBrainSurfaceColor();
++	pixmap.fill(color);
++	m_labelBrainSurfaceColor->setPixmap(pixmap);
++
++	if (ep) color = ep->getCylinderSidesColor();
++	pixmap.fill(color);
++	m_labelCylinderSidesColor->setPixmap(pixmap);
++
++	if (ep) color = ep->getCylinderEndsColor();
++	pixmap.fill(color);
++	m_labelCylinderEndsColor->setPixmap(pixmap);
++
++	if (ep) color = ep->getPathLineColor();
++	pixmap.fill(color);
++	m_labelPathLineColor->setPixmap(pixmap);
++
++	if (ep) color = ep->getPathMarkersColor();
++	pixmap.fill(color);
++	m_labelPathMarkersColor->setPixmap(pixmap);
++
++	if (ep) color = ep->getFlatMapNodesColor();
++	pixmap.fill(color);
++	m_labelFlatMapNodesColor->setPixmap(pixmap);
++
++	if (ep) color = ep->getVolumeNodesColor();
++	pixmap.fill(color);
++	m_labelVolumeNodesColor->setPixmap(pixmap);
++
++}
++
++void GuiTrajectoryToolDialog::refreshTrajectory()
++{
++	int i;
++	bool b;
++	double xyz[3];
++	double x, y;
++	TrajectoryFile* ptf = m_brainSet->getTrajectoryFile();
++	ElectrodeTrajectoryP ep = ptf->getActiveTrajectory();
++
++	m_bSuppressUpdates = true;
++
++	refreshColors();
++
++	// display checkboxes
++	m_checkboxDisplaySkull->setChecked(ep->getDisplaySkull());
++	m_checkboxDisplayBrain->setChecked(ep->getDisplayBrain());
++	m_checkboxDisplayTrajectory->setChecked(ep->getDisplayTrajectory());
++	m_checkboxDisplayCylinder->setChecked(ep->getDisplayCylinder());
++
++	// node id
++	i = ep->getNodeID();
++	if (i >= 0)
++	{
++		m_lineeditNodeID->setText(QString("%1").arg(i));
++	}
++
++	// target xyz
++	ep->getTarget(xyz);
++	m_lineeditTargetX->setText(QString("%1").arg(xyz[0]));
++	m_lineeditTargetY->setText(QString("%1").arg(xyz[1]));
++	m_lineeditTargetZ->setText(QString("%1").arg(xyz[2]));
++
++	b = ep->getUseNodeID();
++	m_checkboxUseNodeID->setChecked(b);
++	if (b)
++	{
++		m_lineeditNodeID->setReadOnly(false);
++		m_lineeditTargetX->setReadOnly(true);
++		m_lineeditTargetY->setReadOnly(true);
++		m_lineeditTargetZ->setReadOnly(true);
++	}
++	else
++	{
++		m_lineeditNodeID->setReadOnly(true);
++		m_lineeditTargetX->setReadOnly(false);
++		m_lineeditTargetY->setReadOnly(false);
++		m_lineeditTargetZ->setReadOnly(false);
++	}
++
++	// cylinder xyz
++	ep->getCylinderCenter(xyz);
++	m_lineeditCenterX->setText(QString("%1").arg(xyz[0]));
++	m_lineeditCenterY->setText(QString("%1").arg(xyz[1]));
++	m_lineeditCenterZ->setText(QString("%1").arg(xyz[2]));
++	m_lineeditRestAngle->setText(QString("%1").arg(ep->getCylinderBaseAngle()));
++
++	// and update the trajectory angle spinboxes...
++	float theta = ep->getTheta();
++	float phi = ep->getPhi();
++
++	m_spinboxTheta->setValue((int)rintf(theta*1000));
++	m_spinboxPhi->setValue((int)rintf(phi*1000));
++
++	// path radius
++	m_spinboxPathRadius->setValue((double)ep->getPathRadius());
++
++	// depth tool
++	m_sliderDepthTool->setEnabled(ep->getUseDepthTool());
++	if (ep->getUseDepthTool())
++	{
++		m_labelDepth->setNum((double)ep->getPenetrationDepth());
++	}
++	else
++	{
++		m_labelDepth->setText("N/A");
++	}
++
++	// cylinder dimensions
++	m_lineeditCylinderID->setText(QString("%1").arg(ep->getCylinderID()));
++	m_cylinderGridFrame->setID(ep->getCylinderID());
++
++	m_lineeditCylinderOD->setText(QString("%1").arg(ep->getCylinderOD()));
++	m_cylinderGridFrame->setOD(ep->getCylinderOD());
++
++	m_lineeditCylinderH->setText(QString("%1").arg(ep->getCylinderH()));
++
++	m_spinboxMaxPenetrationDepth->setValue((int)ep->getMaxPenetrationDepth());
++
++	m_lineeditSkullNearbyD->setText(QString("%1").arg(ep->getSkullNearbyD()));
++
++	//
++	ep->getGridEntry(&x, &y);
++	m_gridEntryPoint->setText(QString("Electrode location (mm): (%1, %2)").arg(x).arg(y));
++	m_cylinderGridFrame->setSelectedEntry(x, y);
++
++	x = ep->getGridRotation();
++	m_spinboxGridRotation->setValue((int)rintf(x*1000));
++
++	enableWidgets();
++	m_bSuppressUpdates = false;
++}
++
++
++void GuiTrajectoryToolDialog::refreshAll()
++{
++	TrajectoryFile* ptf = m_brainSet->getTrajectoryFile();
++	ElectrodeTrajectoryP ep = ptf->getActiveTrajectory();
++
++	if (ep)
++		qDebug() << "Active trajectory : " << QString(ep->getName().c_str());
++	else
++		qDebug() << "Active trajectory : None";
++
++	// refresh trajectory list box
++	m_listwidgetTrajectories->clear();
++	for (ElectrodeTrajectoryMapIterator it = ptf->getTrajectories().begin(); it!=ptf->getTrajectories().end(); it++)
++	{
++		QListWidgetItem *item =new QListWidgetItem(QString((it->second)->getName().c_str()), m_listwidgetTrajectories);
++		if (ep && ep->getName() == it->second->getName())
++		{
++			m_listwidgetTrajectories->setCurrentItem(item);
++		}
++	}
++
++	if (ep)
++	{
++		refreshTrajectory();
++	}
++	else
++	{
++		// refreshTrajectory calls this also. Call it here to make
++		// sure things are appropriately disabled.
++		enableWidgets();
++	}
++}
++
++void GuiTrajectoryToolDialog::enableWidgets()
++{
++	TrajectoryFile* ptf = m_brainSet->getTrajectoryFile();
++	ElectrodeTrajectoryP ep = ptf->getActiveTrajectory();
++
++	// If there is no active trajectory, everything but the "New" button
++	// should be disabled.
++	// If there is an active trajectory, but no target has been selected,
++	// then a limited set of widgets get enabled.
++	// If there is an active trajectory, and a target has been selected,
++	// then all widgets are enabled.
++
++	if (!ep)
++	{
++		qDebug() << "enableWidgets: no active trajectory";
++		m_targetDisplayGroup->setEnabled(false);
++		m_targetNodeGroup->setEnabled(false);
++		m_trajectoryGroup->setEnabled(false);
++		m_pushbuttonNew->setEnabled(true);
++		m_pushbuttonRemove->setEnabled(false);
++		m_pushbuttonRename->setEnabled(false);
++		m_tab2->setEnabled(false);
++		m_tab3->setEnabled(false);
++	}
++	else
++	{
++		if (!ep->getHasTarget())
++		{
++			qDebug() << "enableWidgets: active trajectory has no target";
++			m_targetDisplayGroup->setEnabled(false);
++			m_targetNodeGroup->setEnabled(true);
++			m_trajectoryGroup->setEnabled(false);
++			m_pushbuttonNew->setEnabled(true);
++			m_pushbuttonRemove->setEnabled(true);
++			m_pushbuttonRename->setEnabled(true);
++			m_tab2->setEnabled(false);
++			m_tab3->setEnabled(false);
++		}
++		else
++		{
++			qDebug() << "enableWidgets: active trajectory has target";
++			m_targetDisplayGroup->setEnabled(true);
++			m_targetNodeGroup->setEnabled(true);
++			m_trajectoryGroup->setEnabled(true);
++			m_pushbuttonNew->setEnabled(true);
++			m_pushbuttonRemove->setEnabled(true);
++			m_pushbuttonRename->setEnabled(true);
++			m_tab2->setEnabled(true);
++			m_tab3->setEnabled(true);
++		}
++	}
++}
++
++
++void dumpvec(std::string s, float *v)
++{
++	std::cout << s << " " << v[0] << " , " << v[1] << " , " << v[2] << std::endl;
++}
+--- /dev/null
++++ b/caret_gui/GuiTrajectoryToolDialog.h
+@@ -0,0 +1,186 @@
++/*LICENSE_START*/
++/*
++ *  Copyright 1995-2002 Washington University School of Medicine
++ *
++ *  http://brainmap.wustl.edu
++ *
++ *  This file is part of CARET.
++ *
++ *  CARET is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License, or
++ *  (at your option) any later version.
++ *
++ *  CARET is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with CARET; if not, write to the Free Software
++ *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
++ *
++ */
++/*LICENSE_END*/
++
++
++#ifndef __GUI_TRAJECTORY_TOOL_DIALOG_H__
++#define __GUI_TRAJECTORY_TOOL_DIALOG_H__
++
++#include <vector>
++
++#include <QDialog>
++#include <QTabWidget>
++#include <QLineEdit>
++#include <QLabel>
++#include <QListWidget>
++#include <QListWidgetItem>
++#include <QDoubleSpinBox>
++#include <string>
++#include "QtAngleSpinBox.h"
++#include "QtCylinderGridFrame.h"
++#include <ANN/ANN.h>
++
++class QGroupBox;
++class QCheckBox;
++class QListBox;
++class QSlider;
++class QSpinBox;
++class BrainSet;
++class QPushButton;
++
++/// Dialog for performing electrode trajectory functions
++class GuiTrajectoryToolDialog : public QDialog {
++	Q_OBJECT
++
++	public:
++	/// constructor
++	GuiTrajectoryToolDialog(QWidget* parent, BrainSet* brain);
++
++	/// destructor
++	~GuiTrajectoryToolDialog();
++
++	/// called to close the dialog
++	virtual void close();
++
++	/// Update displayed items in dialog. This means bringing the state of the item
++	/// (in other words, what it displays) into alignment with the underlying model
++	/// value (e.g. the current values in the active trajectory)
++	void updateItems();
++
++	// refresh all displayable trajectory things. Presumably the update chain in
++	// TrajectoryFile has been called, and now the various things need to be updated.
++	void refreshTrajectory();
++	void refreshColors();
++	void refreshAll();
++
++	protected slots:
++
++	private slots:
++
++	/// called when last selected node button pushed
++	void slotLastSelectedButtonPushed();
++	void slotCheckBoxToggled(bool on);
++	void slotCylinderButtonPushed();
++	void slotCheckBoxDisplayBrainToggled(bool on);
++	void slotCheckBoxDisplaySkullToggled(bool on);
++	void slotCheckBoxDisplayCylinderToggled(bool on);
++	void slotCheckBoxDisplayTrajectoryToggled(bool on);
++	void slotCheckBoxUseDepthToolToggled(bool on);
++	void slotDepthToolToleranceChanged(double v);
++	void slotDepthToolSliderValueChanged( int val);
++
++	void slotNodeIDTextChanged(const QString &t);
++	void slotNodeIDLostFocus();
++	void slotPathRadiusChanged(double v);
++	void slotGridRotationChanged(int value);
++	void slotThetaValueChanged(int value);
++	void slotPhiValueChanged(int value);
++	void slotEditBrainSurfaceColor();
++	void slotEditSkullSurfaceAnnulusColor();
++	void slotEditSkullSurfaceColor();
++	void slotEditCylinderSidesColor();
++	void slotEditCylinderEndsColor();
++	void slotEditPathLineColor();
++	void slotEditPathMarkersColor();
++	void slotEditFlatMapNodesColor();
++	void slotEditVolumeNodesColor();
++	void slotCylinderIDTextChanged(const QString &);
++	void slotCylinderODTextChanged(const QString &);
++	void slotCylinderHTextChanged(const QString &);
++	void slotMaxPenetrationDepthChanged(int val);
++	void slotSkullNearbyDTextChanged(const QString &);
++	void slotCylinderGridSelectionChanged(double x, double y);
++	void slotNewTrajectory();
++	void slotRemoveTrajectory();
++	void slotRenameTrajectory();
++	void slotActiveTrajectoryChanged(QListWidgetItem* current, QListWidgetItem* previous);
++
++	private:
++
++	BrainSet *m_brainSet;
++	std::string m_szTargetNode;
++	QGroupBox *m_targetDisplayGroup;
++	QGroupBox *m_targetNodeGroup;
++	QGroupBox *m_trajectoryGroup;
++	QPushButton *m_pushbuttonNew;
++	QPushButton *m_pushbuttonRemove;
++	QPushButton *m_pushbuttonRename;
++	QWidget *m_tab1;
++	QWidget *m_tab2;
++	QWidget *m_tab3;
++	QListWidget* m_listwidgetTrajectories;
++	QLineEdit* m_lineeditNodeID;
++	QLineEdit* m_lineeditTargetX;
++	QLineEdit* m_lineeditTargetY;
++	QLineEdit* m_lineeditTargetZ;
++	QLineEdit* m_lineeditCenterX;
++	QLineEdit* m_lineeditCenterY;
++	QLineEdit* m_lineeditCenterZ;
++	QLineEdit* m_lineeditRestAngle;
++	QtAngleSpinBox*  m_spinboxTheta;
++	QtAngleSpinBox*  m_spinboxPhi;
++	QCheckBox* m_checkboxUseNodeID;
++	QCheckBox* m_checkboxDisplaySkull;
++	QCheckBox* m_checkboxDisplayBrain;
++	QCheckBox* m_checkboxDisplayCylinder;
++	QCheckBox* m_checkboxDisplayTrajectory;
++	QCheckBox* m_checkboxShowNodesAlongPath;
++	QtAngleSpinBox*  m_spinboxGridRotation;
++	QLabel* m_gridEntryPoint;
++	QDoubleSpinBox* m_spinboxPathRadius;
++	QCheckBox* m_checkboxUseDepthTool;
++	QDoubleSpinBox* m_spinboxDepthToolTolerance;
++	QtCylinderGridFrame* m_cylinderGridFrame;
++	QSlider*   m_sliderDepthTool;
++	QLabel*    m_labelDepth;
++	QLabel*    m_labelBrainSurfaceColor;
++	QLabel*    m_labelSkullSurfaceAnnulusColor;
++	QLabel*    m_labelSkullSurfaceColor;
++	QLabel*    m_labelCylinderSidesColor;
++	QLabel*    m_labelCylinderEndsColor;
++	QLabel*    m_labelPathLineColor;
++	QLabel*    m_labelPathMarkersColor;
++	QLabel*    m_labelFlatMapNodesColor;
++	QLabel*    m_labelVolumeNodesColor;
++	QLineEdit* m_lineeditCylinderID;
++	QLineEdit* m_lineeditCylinderOD;
++	QLineEdit* m_lineeditCylinderH;
++	QSpinBox*  m_spinboxMaxPenetrationDepth;
++	QLineEdit* m_lineeditSkullNearbyD;
++	bool 		  m_bSuppressUpdates;
++
++	QWidget* setupTab1();
++	QWidget* setupTab2();
++	QWidget* setupTab3();
++	void enableWidgets();
++	void updateGridEntryPointLabel();
++
++	// Call this to update the slices shown in a volume view to reflect
++	// the current electrode penetration depth. Should be followed by
++	// a call to update GL windows to actually show the changes.
++	void updateSelectedVolumeSlices();
++};
++
++#endif // __GUI_TRAJECTORY_TOOL_DIALOG_H__
++
+--- a/caret_widgets/CMakeLists.txt
++++ b/caret_widgets/CMakeLists.txt
+@@ -19,6 +19,7 @@
+ QtTableDialog.h
+ QtTextEditDialog.h
+ QtTextFileEditorDialog.h
++QtCylinderGridFrame.h
+ WuQDataEntryDialog.h
+ WuQDialog.h
+ WuQFileDialog.h
+--- a/caret_widgets/QtAngleSpinBox.cxx
++++ b/caret_widgets/QtAngleSpinBox.cxx
+@@ -10,13 +10,14 @@
+ }
+ 
+ 
+-QString QtAngleSpinBox::mapValueToText( int value )
++QString QtAngleSpinBox::textFromValue( int value ) const
+ {
+ 	QString s;
+ 	return s.sprintf("%d.%03d", value/1000, std::abs(value)%1000);
+ }
+ 
+-int QtAngleSpinBox::mapTextToValue( bool *ok )
++int QtAngleSpinBox::valueFromText( const QString& text ) const
+ {
+-    return (int) ( 1000 * text().toFloat() );
++    return (int) ( 1000 * text.toFloat() );
+ }
++
+--- a/caret_widgets/QtAngleSpinBox.h
++++ b/caret_widgets/QtAngleSpinBox.h
+@@ -9,8 +9,13 @@
+ 	public:
+ 	QtAngleSpinBox(int minValue, int maxValue, int step = 1, QWidget * parent = 0, const char * name = 0);
+ 
+-	QString mapValueToText( int value );
+-	int mapTextToValue( bool *ok );
++	protected:
++
++	int valueFromText(const QString & text) const;
++	QString textFromValue(int value) const;
++
++//	QString mapValueToText( int value );
++//	int mapTextToValue( bool *ok );
+ };
+ 
+ 
+--- a/caret_widgets/WuQFileDialog.cxx
++++ b/caret_widgets/WuQFileDialog.cxx
+@@ -2425,5 +2425,6 @@
+    fileExtensionToTypeNameMap[".rgb"] = "Rich Text";
+    fileExtensionToTypeNameMap[".html"] = "HTML";
+    fileExtensionToTypeNameMap[".tgz"] = "Archive Tar/Gzip";
++   fileExtensionToTypeNameMap[".traj"] = "Electrode Trajectory File";
+ }
+ 
+--- a/wb_import/CMakeLists.txt
++++ b/wb_import/CMakeLists.txt
+@@ -73,6 +73,7 @@
+    ${MINC_LIBRARY}
+    ${NETCDF_LIBRARY}
+    ${ZLIB_LIBRARIES}
++   ${LIBANN_LIBRARIES}
+ )
+ 
+ IF(WIN32)

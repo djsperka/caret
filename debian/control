@@ -22,6 +22,11 @@ Description: Computerized Anatomical Reconstruction and Editing Toolkit
  command line tool, that allows access to a substantial proportion of Caret's
  functionality.
  .
+ This version of caret incorporates 'splash', a tool for studying the placement 
+ of recording cylinders for electrophysiological measurements. 
+ The tool can assist in analyzing functional areas which might be accessed by 
+ specific cylinder placements and orientations. 
+ .
  Caret can download and use stereotaxic atlases (human, monkey, mouse and rat)
  from an open online database.
  .

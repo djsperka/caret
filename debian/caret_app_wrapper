@@ -24,5 +24,15 @@ LD_LIBRARY_PATH=/usr/lib/caret/lib/:/usr/lib/qt4/plugins/imageformats \
 CARET5_HOME=/usr/share/caret \
 CARET_WEB_BROWSER=/etc/alternatives/x-www-browser \
 CARET_ATLAS_DIRECTORIES=/usr/share/caret/data_files/fmri_mapping_files \
-/usr/lib/caret/bin/${0##*/} "$@"
+
+# not all args here directly map to program names. Detect "caret5-splash" 
+# and "splash"
+PROG="${0##*/}"
+if [ "${PROG}" = "splash" -o "${PROG}" = "caret5-splash" ]; then
+	PROG="caret5"
+fi
+
+# run prog
+echo "Running $PROG"
+/usr/lib/caret/bin/${PROG} "$@"
 

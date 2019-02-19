@@ -15,3 +15,7 @@ BrainSetCtorFix
 std-cout-fix
 brain-set-writer-hack
 pointer-integer-comparison
+best_fit_plane
+add_caret_widgets
+trajectory_file
+integrate_trajectory
