@@ -1,1 +1,1 @@
-extend-diff-ignore = "(^|/)(\.project)$"
+extend-diff-ignore = "(^|/)(\.project|\.cproject|\.settings/language.settings.xml)$"

@@ -3,7 +3,7 @@ Section: science
 Priority: optional
 Maintainer: NeuroDebian Team <team@neuro.debian.net>
 Uploaders: Michael Hanke <mih@debian.org>, Yaroslav Halchenko <debian@onerussian.com>
-Build-Depends: debhelper (>= 5), libqt4-dev (>= 4.3), libqt4-opengl-dev | libqt4-dev (<< 4.4.0), libqwt5-qt4-dev, libvtk6-dev, libminc-dev, libqtassistantclient-dev, libpng-dev, cmake, debhelper (>= 9)
+Build-Depends: debhelper (>= 5), libqt4-dev (>= 4.3), libqt4-opengl-dev | libqt4-dev (<< 4.4.0), libqwt5-qt4-dev, libvtk6-dev, libminc-dev, libqtassistantclient-dev, libpng-dev, cmake, debhelper (>= 9), libann-dev
 Standards-Version: 3.9.7
 Homepage: http://brainvis.wustl.edu/wiki/index.php/Caret:About
 Vcs-Browser: http://git.debian.org/?p=pkg-exppsy/caret.git
