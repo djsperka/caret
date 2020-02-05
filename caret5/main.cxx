@@ -420,7 +420,7 @@ initializeFileDialog()
    typeMap[SpecFile::getTextFileExtension()] = "Text";
    typeMap[SpecFile::getNeurolucidaFileExtension()] = "Neurolucida";
    typeMap[SpecFile::getCaretScriptFileExtension()] = "Caret Script";
-   
+   typeMap[SpecFile::getTrajectoryFileExtension()] = "Electrode trajectory";
    WuQFileDialog::setFileExtensionToTypeNameMap(typeMap);
 }
 
@@ -613,11 +613,13 @@ main(int argc, char* argv[])
 #endif
 
 #ifdef UBUNTU
+   if (QDir("/usr/share/caret/data_files").exists() == false) {
    QtTextEditDialog* te = new QtTextEditDialog(theMainWindow, true, true);
    te->setWindowTitle("UBUNTU WARNING");
    te->setMinimumSize(600, 600);
    te->setText(UbuntuMessage::getWarningMessage());
-   te->exec();                    
+   te->exec();
+   }
 #endif //UBUNTU
 
    if (initialSpecFiles.empty() == false) {

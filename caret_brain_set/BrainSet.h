@@ -128,6 +128,7 @@ class VectorFile;
 class VocabularyFile;
 class VtkModelFile;
 class WustlRegionFile;
+class TrajectoryFile;
 
 /**
  * Brain Set contains all Surfaces (topology and coordinates) and all
@@ -826,7 +827,10 @@ class BrainSet : public QObject {
       
       /// get the scene file
       SceneFile* getSceneFile() { return sceneFile; };
-      
+
+      /// get trajectory file
+      TrajectoryFile* getTrajectoryFile() { return trajectoryFile; };
+
       /// get the preferences file
       static PreferencesFile* getPreferencesFile();
       
@@ -1359,7 +1363,13 @@ class BrainSet : public QObject {
       
       /// write the scene data file
       void writeSceneFile(const QString& name) throw (FileException);
-      
+
+      /// read an electrode trajectory file
+      void readTrajectoryFile(const QString& name) throw (FileException);
+
+      /// write an electrode trajectory file
+      void writeTrajectoryFile(const QString& name) throw (FileException);
+
       /// read the section data file file
       void readSectionFile(const QString& name, const bool append,
                            const bool updateSpec) throw (FileException);
@@ -2060,7 +2070,10 @@ class BrainSet : public QObject {
       
       /// active unknown topology file
       TopologyFile* topologyUnknown;
-      
+
+      /// electrode trajectory file
+      TrajectoryFile *trajectoryFile;
+
       /// functional volume files
       std::vector<VolumeFile*> volumeFunctionalFiles;
       

@@ -85,6 +85,7 @@ GuiFilesModified::getAllFilesModified() const
       vector &&
       topography &&
       topology &&
+	  trajectory &&
       transformationMatrix &&
       transformationData &&
       vocabulary &&
@@ -137,6 +138,7 @@ GuiFilesModified::setStatusForAll(const bool status)
    vector = status;
    topography = status;
    topology = status;
+   trajectory = status;
    transformationMatrix = status;
    transformationData = status;
    vocabulary = status;

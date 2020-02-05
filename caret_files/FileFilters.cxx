@@ -190,6 +190,7 @@ FileFilters::getAllFileFilters(QStringList& allFileFiltersOut)
    allFileFiltersOut.append(getTopologyGenericFileFilter());
    allFileFiltersOut.append(getTransformationMatrixFileFilter());
    allFileFiltersOut.append(getTransformationDataFileFilter());
+   allFileFiltersOut.append(getTrajectoryFileFilter());
    allFileFiltersOut.append(getVolumeAnatomyFileFilter());
    allFileFiltersOut.append(getVolumeFunctionalFileFilter());
    allFileFiltersOut.append(getVolumePaintFileFilter());

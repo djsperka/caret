@@ -381,7 +381,7 @@ DeformationMapFile::swapSourceAndTargetFiles()
  * Read the deformation map file's data.
  */
 void
-DeformationMapFile::readFileData(QFile& /*file*/, QTextStream& stream, QDataStream& binStream,
+DeformationMapFile::readFileData(QFile& file, QTextStream& stream, QDataStream& binStream,
                                   QDomElement& /* rootElement */) 
                                                     throw (FileException)
 {

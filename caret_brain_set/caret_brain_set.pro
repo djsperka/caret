@@ -5,12 +5,14 @@
 TARGET       = CaretBrainSet
 CONFIG  += staticlib 
 INCLUDEPATH += .
+# need to include before ubuntu settings to get VTK_LIBS
+include(../caret_qmake_include.pro)
 dll {
 	CONFIG -= staticlib
 	CONFIG += plugin
+	LIBS += $$VTK_LIBS
 }
 
-include(../caret_qmake_include.pro)
 
 vs:TEMPLATE=vclib
 !vs:TEMPLATE=lib

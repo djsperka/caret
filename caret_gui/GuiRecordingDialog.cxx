@@ -851,9 +851,13 @@ GuiRecordingDialog::convertQImagetoVTKImageData(const QImage& image)
 
    vtkImageData* vtkImage = vtkImageData::New();
    vtkImage->SetDimensions(width, height, 1);
+#ifdef HAVE_VTK6
+   vtkImage->AllocateScalars(VTK_FLOAT, 3);
+#else
    vtkImage->SetScalarType(VTK_UNSIGNED_CHAR);
    vtkImage->SetNumberOfScalarComponents(3);
    vtkImage->AllocateScalars();
+#endif
    unsigned char* vtkData = static_cast<unsigned char*>(vtkImage->GetScalarPointer());
    
    //
@@ -889,10 +893,18 @@ GuiRecordingDialog::addImageToMpeg1VTK(const QImage& image)
       vtkMpeg1MovieWriter = vtkMPEG1Writer::New();
       vtkMpeg1MovieWriter->DebugOn();
       vtkMpeg1MovieWriter->SetFileName(movieNameLineEdit->text().toAscii().constData());
+#ifdef HAVE_VTK6
+      vtkMpeg1MovieWriter->SetInputData(vtkImage);
+#else
       vtkMpeg1MovieWriter->SetInput(vtkImage);
+#endif
       vtkMpeg1MovieWriter->Start();
    }
+#ifdef HAVE_VTK6
+   vtkMpeg1MovieWriter->SetInputData(vtkImage);
+#else
    vtkMpeg1MovieWriter->SetInput(vtkImage);
+#endif
    vtkMpeg1MovieWriter->Write();
 
    vtkImage->Delete();
@@ -916,10 +928,18 @@ GuiRecordingDialog::addImageToMpeg2VTK(const QImage& image)
       vtkMpeg2MovieWriter = vtkMPEG2Writer::New();
       vtkMpeg2MovieWriter->DebugOn();
       vtkMpeg2MovieWriter->SetFileName(fileName.toAscii().constData());
+#ifdef HAVE_VTK6
+      vtkMpeg2MovieWriter->SetInputData(vtkImage);
+#else
       vtkMpeg2MovieWriter->SetInput(vtkImage);
+#endif
       vtkMpeg2MovieWriter->Start();
    }
+#ifdef HAVE_VTK6
+   vtkMpeg2MovieWriter->SetInputData(vtkImage);
+#else
    vtkMpeg2MovieWriter->SetInput(vtkImage);
+#endif
    vtkMpeg2MovieWriter->Write();
 
    vtkImage->Delete();
@@ -943,7 +963,11 @@ GuiRecordingDialog::addImageToAviVTK(const QImage& /*image*/)
       vtkAviMovieWriter = vtkAVIWriter::New();
       vtkAviMovieWriter->DebugOn();
       vtkAviMovieWriter->SetFileName(movieNameLineEdit->text().toAscii().constData());
+#ifdef HAVE_VTK6
+      vtkAviMovieWriter->SetInputData(vtkImage);
+#else
       vtkAviMovieWriter->SetInput(vtkImage);
+#endif
       vtkAviMovieWriter->Start();
    }
 /*
@@ -952,7 +976,11 @@ GuiRecordingDialog::addImageToAviVTK(const QImage& /*image*/)
  *     jpeg->SetInput(vtkImage);
  *     jpeg->Write();
  */
+#ifdef HAVE_VTK6
+   vtkAviMovieWriter->SetInputData(vtkImage);
+#else
    vtkAviMovieWriter->SetInput(vtkImage);
+#endif
    vtkAviMovieWriter->Write();
 
    vtkImage->Delete();

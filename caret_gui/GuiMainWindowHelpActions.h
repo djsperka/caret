@@ -49,7 +49,10 @@ class GuiMainWindowHelpActions : public QObject {
       
       /// about QT action
       QAction* getAboutQtAction() { return aboutQtAction; }
-      
+
+      /// about SPLASH action
+      QAction* getAboutSplashAction() { return aboutSplashAction; }
+
       /// about OpenGL action
       QAction* getAboutOpenGLAction() { return aboutOpenGLAction; }
       
@@ -92,6 +95,9 @@ class GuiMainWindowHelpActions : public QObject {
       
       /// display information about the qt version
       void helpMenuAboutQT();
+
+      /// display splash info
+      void helpMenuAboutSplash();
       
       /// display information about the OpenGL version
       void helpMenuAboutOpenGL();
@@ -132,7 +138,10 @@ class GuiMainWindowHelpActions : public QObject {
       
       /// about QT action
       QAction* aboutQtAction;
-      
+
+      /// about Splash action
+      QAction* aboutSplashAction;
+
       /// about OpenGL action
       QAction* aboutOpenGLAction;
       

@@ -401,7 +401,11 @@ VtkModelFile::readPolyData(vtkPolyData* polyData)
    vtkTriangleFilter* triangleFilter = NULL;
    if (polyData->GetNumberOfStrips() > 0) {
       triangleFilter = vtkTriangleFilter::New();
+#ifdef HAVE_VTK6
+      triangleFilter->SetInputData(polyData);
+#else
       triangleFilter->SetInput(polyData);
+#endif
       triangleFilter->Update();
       polyData = triangleFilter->GetOutput();
    }
@@ -410,7 +414,11 @@ VtkModelFile::readPolyData(vtkPolyData* polyData)
    // Compute normals
    //
    vtkPolyDataNormals* polyNormals = vtkPolyDataNormals::New();
+#ifdef HAVE_VTK6
+   polyNormals->SetInputData(polyData);
+#else
    polyNormals->SetInput(polyData);
+#endif
    polyNormals->SplittingOff();
    polyNormals->ConsistencyOn();
    polyNormals->ComputePointNormalsOn();
@@ -878,7 +886,11 @@ VtkModelFile::writeFile(const QString& fileNameIn) throw (FileException)
 
    if (FileUtilities::filenameExtension(filename) == "vtp") {
       vtkXMLPolyDataWriter *writer = vtkXMLPolyDataWriter::New();
+#ifdef HAVE_VTK6
+      writer->SetInputData(polyData);
+#else
       writer->SetInput(polyData);
+#endif
       //writer->SetHeader("Written by Caret");
       writer->SetFileName((char*)filename.toAscii().constData());
       writer->Write();
@@ -887,7 +899,11 @@ VtkModelFile::writeFile(const QString& fileNameIn) throw (FileException)
    }
    else {
       vtkPolyDataWriter *writer = vtkPolyDataWriter::New();
+#ifdef HAVE_VTK6
+      writer->SetInputData(polyData);
+#else
       writer->SetInput(polyData);
+#endif
       writer->SetHeader("Written by Caret");
       writer->SetFileName((char*)filename.toAscii().constData());
       writer->Write();

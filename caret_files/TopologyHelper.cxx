@@ -171,7 +171,11 @@ TopologyHelper::TopologyHelper(vtkPolyData* vtkIn,
    vtkTriangleFilter *triangleFilter = NULL;
    if (vtk->GetNumberOfStrips() > 0) {
       triangleFilter = vtkTriangleFilter::New();
+#ifdef HAVE_VTK6
+      triangleFilter->SetInputData(vtk);
+#else
       triangleFilter->SetInput(vtk);
+#endif
       triangleFilter->Update();
       vtk = triangleFilter->GetOutput();
    }

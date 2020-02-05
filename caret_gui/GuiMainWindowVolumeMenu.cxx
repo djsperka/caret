@@ -67,6 +67,8 @@ GuiMainWindowVolumeMenu::GuiMainWindowVolumeMenu(GuiMainWindow* parent) :
 
    createTransformSubMenu();
    
+   addAction(volumeActions->getTrajectoryToolAction());
+
    QObject::connect(this, SIGNAL(aboutToShow()),
                     volumeActions, SLOT(updateActions()));
 }

@@ -24,6 +24,7 @@ ADD_LIBRARY(CaretFiles
       ArealEstimationFile.h 
 	   AtlasSpaceFile.h 
 	   AtlasSurfaceDirectoryFile.h 
+	   BestFitPlane.h
       BorderColorFile.h 
       BorderFile.h 
       BorderProjectionFile.h 
@@ -88,6 +89,7 @@ ADD_LIBRARY(CaretFiles
 	   TopologyHelper.h 
       TopologyNode.h 
 	   TransformationMatrixFile.h 
+	   TrajectoryFile.h
       VectorFile.h 
       VocabularyFile.h 
 	   VolumeFile.h 
@@ -104,6 +106,7 @@ ADD_LIBRARY(CaretFiles
       ArealEstimationFile.cxx 
 	   AtlasSpaceFile.cxx 
 	   AtlasSurfaceDirectoryFile.cxx 
+	   BestFitPlane.cxx
       BorderColorFile.cxx 
       BorderFile.cxx 
       BorderProjectionFile.cxx 
@@ -167,6 +170,7 @@ ADD_LIBRARY(CaretFiles
       SureFitVectorFile.cxx 
       TopographyFile.cxx 
 	   TopologyHelper.cxx 
+	   TrajectoryFile.cxx
 	   TransformationMatrixFile.cxx 
       VectorFile.cxx 
       VocabularyFile.cxx 

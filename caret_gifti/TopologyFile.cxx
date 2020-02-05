@@ -1384,7 +1384,11 @@ TopologyFile::importFromVtkFile(vtkPolyData* polyDataIn)
    vtkTriangleFilter* triangleFilter = NULL;
    if (polyData->GetNumberOfStrips() > 0) {
       triangleFilter = vtkTriangleFilter::New();
+#ifdef HAVE_VTK6
+      triangleFilter->SetInputData(polyDataIn);
+#else
       triangleFilter->SetInput(polyDataIn);
+#endif
       triangleFilter->Update();
       polyData = triangleFilter->GetOutput();
    }
@@ -1700,7 +1704,7 @@ TopologyFile::readTilesBinary(QDataStream& binStream) throw (FileException)
  * Read topology file version 1.
  */
 void
-TopologyFile::readFileDataVersion1(QFile& /*file*/,
+TopologyFile::readFileDataVersion1(QFile& file,
                                    QTextStream& stream,
                                    QDataStream& binStream) throw (FileException)
 {

@@ -138,7 +138,11 @@ CommandVolumeSegmentationToCerebralHull::executeCommand() throw (BrainModelAlgor
    // Write the hull surface
    //
    vtkPolyDataWriter* writer = vtkPolyDataWriter::New();
+#ifdef HAVE_VTK6
+   writer->SetInputData(hullSurface);
+#else
    writer->SetInput(hullSurface);
+#endif
    writer->SetHeader("Written by Caret");
    writer->SetFileName((char*)vtkSurfaceFileName.toAscii().constData());
    writer->Write();

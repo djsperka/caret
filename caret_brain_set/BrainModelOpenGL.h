@@ -543,6 +543,12 @@ class BrainModelOpenGL {
       /// Draw a cuts file.
       void drawCuts();
       
+      /// Draw electrode trajectory
+      void drawElectrodeTrajectory(BrainModelSurface* s);
+
+      /// Draw electrode trajectory and nodes on volume
+		void drawVolumeElectrodeTrajectory(BrainModelVolume* bmv, const VolumeFile::VOLUME_AXIS volumeSliceAxis, const float axisCoord);
+
       /// Draw the borders.
       void drawBorders(BrainModelSurface* s);
       

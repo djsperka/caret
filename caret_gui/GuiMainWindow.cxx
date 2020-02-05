@@ -152,6 +152,7 @@
 #include "GuiTransformationMatrixDialog.h"
 #include "GuiVocabularyFileEditorDialog.h"
 #include "GuiVolumeBiasCorrectionDialog.h"
+#include "GuiTrajectoryToolDialog.h"
 #include "GuiVolumeResizingDialog.h"
 #include "GuiVolumeThresholdSegmentationDialog.h"
 #include "GuiVolumeAttributesDialog.h"
@@ -178,6 +179,7 @@
 #include "VectorFile.h"
 #include "SystemUtilities.h"
 #include "TopographyFile.h"
+#include "TrajectoryFile.h"
 #include "VocabularyFile.h"
 #include "VtkModelFile.h"
 #include "WustlRegionFile.h"
@@ -391,6 +393,7 @@ GuiMainWindow::GuiMainWindow(const bool enableTimingMenu,
    studyMetaDataFileEditorDialog = NULL;
    surfaceRegionOfInterestDialog = NULL;
    surfaceRegionOfInterestDialogOLD = NULL;
+   trajectoryToolDialog = NULL;
    transformMatrixEditorDialog = NULL;
    volumeThresholdSegmentationDialog = NULL;
    volumeResizingDialog    = NULL;
@@ -412,7 +415,7 @@ GuiMainWindow::GuiMainWindow(const bool enableTimingMenu,
    volumePaintColorKeyDialog = NULL;
    volumeProbAtlasColorKeyDialog = NULL;
     
-   QString title("CARET v");
+   QString title("SPLASH/CARET v");
 #ifdef UBUNTU
    title.append("u");
 #endif
@@ -1305,6 +1308,29 @@ GuiMainWindow::getShapeModificationDialog(const bool showIt)
 }
 
 /**
+ * Create, possibly show and return the electrode trajectory tool dialog.
+ */
+GuiTrajectoryToolDialog*
+GuiMainWindow::getTrajectoryToolDialog(bool showIt)
+{
+   if (trajectoryToolDialog == NULL) {
+      trajectoryToolDialog = new GuiTrajectoryToolDialog(this, getBrainSet());
+   }
+   if (showIt)
+   {
+	   trajectoryToolDialog->show();
+	   trajectoryToolDialog->activateWindow();
+   }
+   return trajectoryToolDialog;
+}
+
+
+void GuiMainWindow::displayTrajectoryToolDialog()
+{
+	getTrajectoryToolDialog(true);
+}
+
+/**
  * Show the flat morphing dialog
  */
 void
@@ -1841,6 +1867,7 @@ GuiMainWindow::checkForModifiedFiles(BrainSet* bs,
    checkFileModified("Study Metadata File", bs->getStudyMetaDataFile(), msg);
    checkFileModified("Surface Shape File", bs->getSurfaceShapeFile(), msg);
    checkFileModified("Topography File", bs->getTopographyFile(), msg);
+   checkFileModified("Trajectory File", bs->getTrajectoryFile(), msg);
    checkFileModified("Vocabulary File", bs->getVocabularyFile(), msg);
    checkFileModified("Transformation Matrix File", bs->getTransformationMatrixFile(), msg);
    for (int i = 0; i < bs->getNumberOfVectorFiles(); i++) {
@@ -2135,6 +2162,7 @@ GuiMainWindow::readSpecFile(const QString& filename)
       return;
    }
 
+   qDebug() << "GuiMainWindow::readSpecFile() - call GuiSpecFileDialog()";
    GuiSpecFileDialog* specDialog = new GuiSpecFileDialog(this, sf, 
                                         GuiSpecFileDialog::SPEC_DIALOG_MODE_OPEN_SPEC_FILE);
    specDialog->show();

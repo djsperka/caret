@@ -3845,7 +3845,7 @@ BrainModelVolumeSureFitSegmentation::generateOuterBoundary() throw (BrainModelAl
 {
 	//%printf("#### GenerateOuterBoundary begin ####\n");
    if (DebugControl::getDebugOn()) {
-      std::cout << "#### GenerateOuterBoundary ####" << std::cout;
+      std::cout << "#### GenerateOuterBoundary ####" << std::endl;
    }
    
 	//%int i;

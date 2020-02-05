@@ -239,7 +239,10 @@ class FileFilters {
       
       /// file filer for  file
       static QString getTopologyGenericFileFilter() { return QString("Topology Files (*%1)").arg(SpecFile::getTopoFileExtension()); }
-      
+
+      /// file filer for  file
+      static QString getTrajectoryFileFilter() { return QString("Electrode Trajectory Files (*%1)").arg(SpecFile::getTrajectoryFileExtension()); }
+
       /// file filer for  file
       static QString getTransformationMatrixFileFilter() { return QString("Transformation Matrix Files (*%1)").arg(SpecFile::getTransformationMatrixFileExtension()); }
 

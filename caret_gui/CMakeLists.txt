@@ -190,6 +190,7 @@ SET(MOC_INPUT_HEADER_FILES
       GuiTopologyTypeComboBox.h 
 	   GuiTransformationMatrixDialog.h 
       GuiTransformationMatrixSelectionControl.h 
+      GuiTrajectoryToolDialog.h
 	   GuiUserViewSaveDialog.h 
       GuiVectorFileComboBox.h 
       GuiVocabularyFileEditorDialog.h 
@@ -400,6 +401,7 @@ ADD_LIBRARY(CaretGui
       GuiTopologyTypeComboBox.h 
 	   GuiTransformationMatrixDialog.h 
       GuiTransformationMatrixSelectionControl.h 
+      GuiTrajectoryToolDialog.h
 	   GuiUserViewSaveDialog.h 
       GuiVectorFileComboBox.h 
       GuiVocabularyFileEditorDialog.h 
@@ -603,6 +605,7 @@ ADD_LIBRARY(CaretGui
 	   GuiTopologyFileComboBox.cxx 
 	   GuiTransformationMatrixDialog.cxx 
       GuiTransformationMatrixSelectionControl.cxx 
+      GuiTrajectoryToolDialog.cxx
 	   GuiUserViewSaveDialog.cxx 
       GuiVectorFileComboBox.cxx 
       GuiVocabularyFileEditorDialog.cxx 

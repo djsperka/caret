@@ -66,6 +66,12 @@ GuiMainWindowHelpActions::GuiMainWindowHelpActions(QWidget* parent)
    QObject::connect(aboutQtAction, SIGNAL(triggered(bool)),
                     this, SLOT(helpMenuAboutQT()));
 
+   aboutSplashAction = new QAction(parent);
+   aboutSplashAction->setText("About Splash...");
+   aboutSplashAction->setObjectName("aboutSplashAction");
+   QObject::connect(aboutSplashAction, SIGNAL(triggered(bool)),
+                    this, SLOT(helpMenuAboutSplash()));
+
    aboutOpenGLAction = new QAction(parent);
    aboutOpenGLAction->setText("About OpenGL...");
    aboutOpenGLAction->setObjectName("aboutOpenGLAction");
@@ -265,6 +271,38 @@ GuiMainWindowHelpActions::helpMenuAbout()
    te.setText(msg);
    te.exec();
 }
+
+
+void GuiMainWindowHelpActions::helpMenuAboutSplash()
+{
+	QString msg;
+	msg.append("SPLASh v1.0\n");
+	msg.append("Stereotactic PLAnning Software\n");
+	msg.append("\n");
+	msg.append("Daniel Sperka and Jochen Ditterich\n");
+	msg.append("Copyright 2009 Regents University of California\n");
+	msg.append("\n");
+	msg.append("Center for Neuroscience\n");
+	msg.append("University of California, Davis\n");
+	msg.append("\n");
+	msg.append("http://systems.ucdavis.edu/ett.html\n");
+	msg.append("djsperka@ucdavis.edu\n");
+	msg.append("\n");
+	msg.append("SPLASh also contains the following software:\n");
+	msg.append("\n");
+	msg.append("Approximate Nearest Neighbors (ANN) Library\n");
+	msg.append("Copyright (c) 1997-2005 University of Maryland,\n");
+	msg.append("    Sunil Arya and David Mount All Rights Reserved)\n");
+	msg.append("    http://www.cs.umd.edu/~mount/ANN/\n");
+	msg.append("\n");
+	msg.append("The following algorithm has proved quite useful as well.\n");
+	msg.append("http://codesuppository.blogspot.com/2006/03/best-fit-plane.html\n");
+	msg.append("Copyright (c) 1998-2006.  All Rights Reserved, Geometric Tools, Inc. \n");
+	msg.append("http://www.geometrictools.com\n");
+
+	QMessageBox::information(theMainWindow, "Splash Information", msg);
+}
+
 
 /**
  *

@@ -1408,7 +1408,7 @@ GuiLoadedFileManagementDialog::addFileToGrid(AbstractFile* af,
                                       modifiedLabel,
                                       specFileTagIn));
 
-         if (dynamic_cast<VectorFile*>(af) == false) {
+         if (dynamic_cast<VectorFile*>(af) == NULL) {
             for (int i = 0; i < dataFileInfo.getNumberOfFiles(); i++) {
                if (dataFileInfo.files[i].selected == SpecFile::SPEC_TRUE) {
                   const QString name(FileUtilities::basename(dataFileInfo.files[i].filename));

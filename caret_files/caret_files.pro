@@ -21,6 +21,7 @@ HEADERS += AbstractFile.h \
       ArealEstimationFile.h \
 	   AtlasSpaceFile.h \
 	   AtlasSurfaceDirectoryFile.h \
+	   BestFitPlane.h \
       BorderColorFile.h \
       BorderFile.h \
       BorderProjectionFile.h \
@@ -103,6 +104,7 @@ HEADERS += AbstractFile.h \
       TopologyFile.h \
 	   TopologyHelper.h \
       TopologyNode.h \
+      TrajectoryFile.h \
 	   TransformationMatrixFile.h \
       VectorFile.h \
       VocabularyFile.h \
@@ -126,6 +128,7 @@ SOURCES += AbstractFile.cxx \
       ArealEstimationFile.cxx \
 	   AtlasSpaceFile.cxx \
 	   AtlasSurfaceDirectoryFile.cxx \
+	   BestFitPlane.cxx \
       BorderColorFile.cxx \
       BorderFile.cxx \
       BorderProjectionFile.cxx \
@@ -207,6 +210,7 @@ SOURCES += AbstractFile.cxx \
       TopographyFile.cxx \
       TopologyFile.cxx \
 	   TopologyHelper.cxx \
+	   TrajectoryFile.cxx \
 	   TransformationMatrixFile.cxx \
       VectorFile.cxx \
       VocabularyFile.cxx \

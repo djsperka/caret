@@ -84,6 +84,9 @@ class GuiMainWindowVolumeActions : public QObject {
       /// create math operations action
       QAction* getMathOperationsVolumeAction() { return mathOperationsVolumeAction; }
 
+      /// generate electrode traj tool
+      QAction* getTrajectoryToolAction() { return trajectoryToolAction; }
+
       /// is transform rotation checked
       bool getTranformRotationChecked() const { return enableRotationAction->isChecked(); }
       
@@ -155,6 +158,9 @@ class GuiMainWindowVolumeActions : public QObject {
       /// create math operations action
       QAction* mathOperationsVolumeAction;
       
+      /// trajectory tool action
+      QAction* trajectoryToolAction;
+
       /// create empty volume action
       QAction* createEmptyVolumeAction;
       

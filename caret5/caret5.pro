@@ -223,7 +223,7 @@ ubuntu {
    
    LIBS += $$VTK_LIBS
    LIBS -= -lvtkjpeg -lvtkpng -lvtkexpat -lvtkzlib
-   LIBS += -ldl
+   LIBS += -ldl -lz -lqwt-qt4
    QTPLUGIN -= qgif qjpeg qtiff
    QMAKE_CXXFLAGS += -DUBUNTU
 

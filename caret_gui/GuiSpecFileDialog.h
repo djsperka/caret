@@ -470,6 +470,9 @@ class GuiSpecFileDialogMainWindow : public QMainWindow {
       /// group box for geodesic distance file
       QGroupBox* geodesicGroup;
       
+      /// group box for trajectory file
+      QGroupBox* trajectoryGroup;
+
       /// file filter values
       FILE_FILTER_TYPE fileFilterSelections;
       

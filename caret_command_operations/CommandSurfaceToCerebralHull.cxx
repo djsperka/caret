@@ -205,7 +205,11 @@ CommandSurfaceToCerebralHull::executeCommand() throw (BrainModelAlgorithmExcepti
    // Write the Hull VTK file
    //
    vtkPolyDataWriter* writer = vtkPolyDataWriter::New();
+#ifdef HAVE_VTK6
+   writer->SetInputData(hullPolyData);
+#else
    writer->SetInput(hullPolyData);
+#endif
    writer->SetHeader("Written by Caret");
    writer->SetFileName((char*)outputCerebralHullVtkFileName.toAscii().constData());
    writer->Write();

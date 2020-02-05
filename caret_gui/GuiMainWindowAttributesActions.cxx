@@ -337,7 +337,7 @@ GuiMainWindowAttributesActions::slotVolumeToSurfaceMapper()
 {
    static GuiMapFmriDialog* mfd = NULL;
    if (mfd == NULL) {
-      mfd = new GuiMapFmriDialog(theMainWindow, theMainWindow->getBrainSet(), true, false);
+      mfd = new GuiMapFmriDialog(theMainWindow, true, false);
       QObject::connect(mfd, SIGNAL(signalMappingComplete()),
                        this, SLOT(slotVolumeToSurfaceMapperComplete()));
    }

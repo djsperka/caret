@@ -2425,5 +2425,6 @@ WuQFileDialog::initializeFileExtensionToTypeNameMap()
    fileExtensionToTypeNameMap[".rgb"] = "Rich Text";
    fileExtensionToTypeNameMap[".html"] = "HTML";
    fileExtensionToTypeNameMap[".tgz"] = "Archive Tar/Gzip";
+   fileExtensionToTypeNameMap[".traj"] = "Electrode Trajectory File";
 }
 

@@ -1293,7 +1293,11 @@ BrainModelSurface::convertToVtkPolyData() const
          polyData->SetPolys(cells);
          
          vtkPolyDataNormals* normals = vtkPolyDataNormals::New();
+#ifdef HAVE_VTK6
+         normals->SetInputData(polyData);
+#else
          normals->SetInput(polyData);
+#endif
          normals->SplittingOff();
          normals->ConsistencyOn();
          normals->ComputePointNormalsOn();
@@ -1424,7 +1428,11 @@ BrainModelSurface::copyTopologyFromVTK(vtkPolyData* polyData)
       vtkTriangleFilter* triangleFilter = NULL;
       if (polyData->GetNumberOfStrips() > 0) {
          triangleFilter = vtkTriangleFilter::New();
+#ifdef HAVE_VTK6
+         triangleFilter->SetInputData(polyData);
+#else
          triangleFilter->SetInput(polyData);
+#endif
          triangleFilter->Update();
          polyData->Delete();
          polyData = triangleFilter->GetOutput();
@@ -1807,7 +1815,11 @@ BrainModelSurface::orientTilesConsistently()
    //    Compute Normals for the points.
    //
    vtkPolyDataNormals* polyNormals = vtkPolyDataNormals::New();
+#ifdef HAVE_VTK6
+   polyNormals->SetInputData(polyData);
+#else
    polyNormals->SetInput(polyData);
+#endif
    polyNormals->SplittingOff(); 
    polyNormals->ConsistencyOn();
    polyNormals->ComputePointNormalsOn(); 
@@ -7708,14 +7720,22 @@ BrainModelSurface::simplifySurface(const int maxPolygons) const
       // Set up to Decimate the polygon data
       //
       vtkDecimatePro* decimater = vtkDecimatePro::New();
+#ifdef HAVE_VTK6
+      decimater->SetInputData(inputPolyData);
+#else
       decimater->SetInput(inputPolyData);
+#endif
       const float reduction = 1.0 - ((float)maxPolygons /
                                      (float)numTriangles);
       if (DebugControl::getDebugOn()) {
          std::cout << "Reduction is " << reduction * 100.0 << "%" << std::endl;
       }
       const double errorVal = VTK_DOUBLE_MAX; //1.0;
+#ifdef HAVE_VTK6
+      decimater->SetInputData(inputPolyData);
+#else
       decimater->SetInput(inputPolyData);
+#endif
       decimater->SetTargetReduction(reduction);
       decimater->PreserveTopologyOff(); //On();
       decimater->SetFeatureAngle(30);
@@ -7732,7 +7752,11 @@ BrainModelSurface::simplifySurface(const int maxPolygons) const
       // Compute normals on the surface
       //
       vtkPolyDataNormals* vtkNormals = vtkPolyDataNormals::New();
+#ifdef HAVE_VTK6
+      vtkNormals->SetInputConnection(decimater->GetOutputPort());
+#else
       vtkNormals->SetInput(decimater->GetOutput());
+#endif
       vtkNormals->SplittingOff();
       vtkNormals->ConsistencyOn();
       vtkNormals->ComputePointNormalsOn();

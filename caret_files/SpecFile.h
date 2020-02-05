@@ -519,7 +519,8 @@ class SpecFile : public AbstractFile {
       static QString getMniObjeSurfaceFileExtension() { return ".obj"; }
       static QString getZipFileExtension() { return ".zip"; }
       static QString getMultiResMorphFileExtension() { return ".morph"; }
-      
+      static QString getTrajectoryFileExtension() { return ".traj"; }
+
       // IMPORTANT if new extensions added, update the method
       //    addUnknownTypeOfFileToSpecFile()
       
@@ -661,6 +662,8 @@ class SpecFile : public AbstractFile {
       
       Entry scriptFile;
       
+      Entry trajectoryFile;
+
       static QString getVolumeFunctionalFileTag()   { return "volume_functional_file"; }
       static QString getVolumePaintFileTag()        { return "volume_paint_file"; }
       static QString getVolumeProbAtlasFileTag() { return "volume_prob_atlas_file"; }
@@ -731,7 +734,7 @@ class SpecFile : public AbstractFile {
       static QString getPaletteFileTag() { return "palette_file"; }
       
       static QString getTopographyFileTag() { return "topography_file"; }
-      
+      static QString getTrajectoryFileTag() { return "electrode_trajectory_file"; }
       static QString getCellFileTag() { return "cell_file"; }
       static QString getCellColorFileTag() { return "cell_color_file"; }
       static QString getCellProjectionFileTag() { return "cellproj_file"; }

@@ -47,6 +47,7 @@
 #include <QToolButton>
 #include <QToolTip>
 #include <QGridLayout>
+#include <QtDebug>
 
 #include "AreaColorFile.h"
 #include "ArealEstimationFile.h"
@@ -717,6 +718,13 @@ GuiSpecFileDialogMainWindow::GuiSpecFileDialogMainWindow(QWidget* parent,
                                 bs->getWustlRegionFile(),
                                 SpecFile::getWustlRegionFileTag(),
                                 specFile.wustlRegionFile);
+
+   trajectoryGroup = listFiles(filesLayout,
+		   	   	   	   	   	   "Electrode trajectory Files",
+							   NULL,
+							   SpecFile::getTrajectoryFileTag(),
+							   specFile.trajectoryFile);
+
 
    QLabel* dummyLabel = new QLabel(" ");
    filesLayout->addWidget(dummyLabel);
@@ -2659,6 +2667,7 @@ GuiSpecFileDialogMainWindow::listFiles(QVBoxLayout* layout,
                              const bool volumeFileFlag)
 {
    const int numRows = static_cast<int>(dataFileEntry.getNumberOfFiles());
+
    if (numRows == 0) {
       return NULL;
    }

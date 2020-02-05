@@ -3694,6 +3694,16 @@ VolumeFile::convertToVtkStructuredPoints(const bool makeUnsignedCharType) const
    const int numVoxels = getTotalNumberOfVoxels();
    
    vtkDataArray* scalars = NULL;
+#ifdef HAVE_VTK6
+   if (makeUnsignedCharType) {
+      scalars = vtkUnsignedCharArray::New();
+      sp->AllocateScalars(VTK_UNSIGNED_CHAR, numberOfComponentsPerVoxel);
+   }
+   else {
+      scalars = vtkFloatArray::New();
+      sp->AllocateScalars(VTK_FLOAT, numberOfComponentsPerVoxel);
+   }
+#else
    if (makeUnsignedCharType) {
       scalars = vtkUnsignedCharArray::New();
       sp->SetScalarTypeToUnsignedChar();
@@ -3704,6 +3714,7 @@ VolumeFile::convertToVtkStructuredPoints(const bool makeUnsignedCharType) const
    }
    
    scalars->SetNumberOfComponents(numberOfComponentsPerVoxel);
+#endif
    scalars->SetNumberOfTuples(numVoxels);
    float* temp = new float[numberOfComponentsPerVoxel];
    for (int i = 0; i < numVoxels; i++) {
@@ -3841,6 +3852,16 @@ VolumeFile::convertToVtkImageData(const bool makeUnsignedCharType) const
    const int numVoxels = getTotalNumberOfVoxels();
    
    vtkDataArray* scalars = NULL;
+#ifdef HAVE_VTK6
+   if (makeUnsignedCharType) {
+      scalars = vtkUnsignedCharArray::New();
+      id->AllocateScalars(VTK_UNSIGNED_CHAR, numberOfComponentsPerVoxel);
+   }
+   else {
+      scalars = vtkFloatArray::New();
+      id->AllocateScalars(VTK_FLOAT, numberOfComponentsPerVoxel);
+   }
+#else
    if (makeUnsignedCharType) {
       scalars = vtkUnsignedCharArray::New();
       id->SetScalarTypeToUnsignedChar();
@@ -3851,6 +3872,7 @@ VolumeFile::convertToVtkImageData(const bool makeUnsignedCharType) const
    }
    
    scalars->SetNumberOfComponents(numberOfComponentsPerVoxel);
+#endif
    scalars->SetNumberOfTuples(numVoxels);
    float* temp = new float[numberOfComponentsPerVoxel];
    for (int i = 0; i < numVoxels; i++) {
@@ -3904,7 +3926,11 @@ VolumeFile::applyTransformationMatrix(vtkTransform* transform)
    
    vtkImageReslice* reslice = vtkImageReslice::New();   
    reslice->SetNumberOfThreads(1);
+#ifdef HAVE_VTK6
+   reslice->SetInputData(spInput);
+#else
    reslice->SetInput(spInput);
+#endif
    reslice->SetInformationInput(spInput);
    reslice->SetResliceTransform(transform);
    reslice->SetAutoCropOutput(1);
@@ -3962,7 +3988,11 @@ VolumeFile::resampleToSpacing(const float newSpacing[3],
 
    vtkImageResample* resample = vtkImageResample::New();   
    resample->SetNumberOfThreads(1);
+#ifdef HAVE_VTK6
+   resample->SetInputData(spInput);
+#else
    resample->SetInput(spInput);
+#endif
    resample->SetAxisOutputSpacing(0, newSpacing[0]);
    resample->SetAxisOutputSpacing(1, newSpacing[1]);
    resample->SetAxisOutputSpacing(2, newSpacing[2]);
@@ -4387,7 +4417,11 @@ VolumeFile::exportVtkStructuredPointsVolume(const QString& fileName) throw (File
       vtkStructuredPoints* sp = convertToVtkStructuredPoints();
       vtkStructuredPointsWriter* writer = vtkStructuredPointsWriter::New();
       writer->SetFileName((char*)fileName.toAscii().constData());
+#ifdef HAVE_VTK6
+      writer->SetInputData(sp);
+#else
       writer->SetInput(sp);
+#endif
       writer->Write();
       writer->Delete();
       sp->Delete();
@@ -6772,7 +6806,11 @@ VolumeFile::floodFillWithVTK(const VoxelIJK& seedVoxel,
    vtkStructuredPoints* sp = convertToVtkStructuredPoints(true);
    
    vtkImageSeedConnectivity* connect = vtkImageSeedConnectivity::New();
+#ifdef HAVE_VTK6
+   connect->SetInputData(sp);
+#else
    connect->SetInput(sp);
+#endif
    connect->SetInputConnectValue(connectedValueIn);
    connect->SetOutputConnectedValue(connectedValueOut);
    connect->SetOutputUnconnectedValue(unconnectedValueOut);
@@ -8714,7 +8752,11 @@ VolumeFile::getSegmentationTopologyInformation(int& numberOfObjects,
    // Shrinker - does this actually do anything ?
    //
    vtkImageShrink3D* shrinker = vtkImageShrink3D::New();
+#ifdef HAVE_VTK6
+   shrinker->SetInputData(sp);
+#else
    shrinker->SetInput(sp);
+#endif
    shrinker->SetShrinkFactors(1, 1, 1);
    shrinker->AveragingOn();
 
@@ -8724,13 +8766,21 @@ VolumeFile::getSegmentationTopologyInformation(int& numberOfObjects,
    vtkImageGaussianSmooth* gaussian = vtkImageGaussianSmooth::New();
    gaussian->SetDimensionality(3);
    gaussian->SetStandardDeviation(0);
+#ifdef HAVE_VTK6
+   gaussian->SetInputConnection(shrinker->GetOutputPort());
+#else
    gaussian->SetInput(shrinker->GetOutput());
+#endif
 
    //
    // Marching cubes converts volume to a surface
    //
    vtkMarchingCubes* mc = vtkMarchingCubes::New();
+#ifdef HAVE_VTK6
+   mc->SetInputConnection(gaussian->GetOutputPort());
+#else
    mc->SetInput(gaussian->GetOutput());
+#endif
    mc->SetValue(0, 127.5);
    mc->ComputeScalarsOff();
    mc->ComputeGradientsOff();
@@ -8740,19 +8790,31 @@ VolumeFile::getSegmentationTopologyInformation(int& numberOfObjects,
    // Clean up surface created by marching cubes
    //
    vtkCleanPolyData* clean = vtkCleanPolyData::New();
+#ifdef HAVE_VTK6
+   clean->SetInputConnection(mc->GetOutputPort());
+#else
    clean->SetInput(mc->GetOutput());
+#endif
          
    //    
    // Make sure mesh is only triangles
    //
    vtkTriangleFilter *triangleFilter = vtkTriangleFilter::New();
+#ifdef HAVE_VTK6
+   triangleFilter->SetInputConnection(clean->GetOutputPort());
+#else
    triangleFilter->SetInput(clean->GetOutput());
+#endif
    
    //
    // Compute normals on the surface to fix polygon orientations
    //
    vtkPolyDataNormals* rawNormals = vtkPolyDataNormals::New();
+#ifdef HAVE_VTK6
+   rawNormals->SetInputConnection(triangleFilter->GetOutputPort());
+#else
    rawNormals->SetInput(triangleFilter->GetOutput());
+#endif
    rawNormals->SplittingOff();
    rawNormals->ConsistencyOn();
    rawNormals->ComputePointNormalsOn();

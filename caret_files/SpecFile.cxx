@@ -34,7 +34,7 @@
 #include <QDomNode>
 #include <QDomText>
 #include <QFileInfo>
-
+#include <QtDebug>
 #include "BorderFile.h"
 #include "CoordinateFile.h"
 #include "FileUtilities.h"
@@ -188,7 +188,7 @@ SpecFile::SpecFile()
    
    studyCollectionFile.initialize("Study Collection File", getStudyCollectionFileTag(), Entry::FILE_TYPE_OTHER);
    studyMetaDataFile.initialize("Study Metadata File", getStudyMetaDataFileTag(), Entry::FILE_TYPE_OTHER);
-   
+   trajectoryFile.initialize("Electrode Trajectory File", getTrajectoryFileTag(), Entry::FILE_TYPE_OTHER);
    transformationDataFile.initialize("Transformation Data File", getTransformationDataFileTag(), Entry::FILE_TYPE_SURFACE);
    
    vocabularyFile.initialize("Vocabulary File", getVocabularyFileTag(), Entry::FILE_TYPE_OTHER);
@@ -360,6 +360,9 @@ SpecFile::updateAllEntries()
    allEntries.push_back(&vocabularyFile);
 
    allEntries.push_back(&documentFile);
+
+   // djs add trajectory file type
+   allEntries.push_back(&trajectoryFile);
 }
       
 /**
@@ -529,6 +532,8 @@ SpecFile::copyHelperSpecFile(const SpecFile& sf)
    
    otherTags = sf.otherTags;
    otherTagsValues = sf.otherTagsValues;
+
+   trajectoryFile = sf.trajectoryFile;
 
    updateAllEntries();
 }
@@ -2729,6 +2734,7 @@ SpecFile::Entry::addFile(const QString& tagReadIn,
                          const Structure& structureIn) 
 {
    bool matches = false;
+
    if (specFilePatternMatchFlag) {
       if (tagReadIn.contains(specFileTag)) {
          matches = true;

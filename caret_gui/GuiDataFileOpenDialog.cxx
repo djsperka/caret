@@ -144,6 +144,7 @@ GuiDataFileOpenDialog::GuiDataFileOpenDialog(QWidget* parent,
    filterNames << FileFilters::getTopologyGenericFileFilter();
    filterNames << FileFilters::getTransformationMatrixFileFilter();
    filterNames << FileFilters::getTransformationDataFileFilter();
+   filterNames << FileFilters::getTrajectoryFileFilter();
    filterNames << FileFilters::getVocabularyFileFilter();
    filterNames << FileFilters::getVolumeAnatomyFileFilter();
    filterNames << FileFilters::getVolumeFunctionalFileFilter();
@@ -768,6 +769,9 @@ GuiDataFileOpenDialog::readFile(const QString& fileName,
    }
    else if (filterName == FileFilters::getTopologyGenericFileFilter()) {
       error = openDataFile(this, GENERIC_TOPOLOGY, fileName, appendToCurrentFileFlag, addToSpecFileFlag, msg, warning);
+   }
+   else if (filterName == FileFilters::getTrajectoryFileFilter()) {
+      error = openDataFile(this, SpecFile::getTrajectoryFileTag(), fileName, appendToCurrentFileFlag, addToSpecFileFlag, msg, warning);
    }
    else if (filterName == FileFilters::getVolumeAnatomyFileFilter()) {
       error = openDataFile(this, SpecFile::getVolumeAnatomyFileTag(), fileName, appendToCurrentFileFlag, addToSpecFileFlag, msg, warning);
@@ -1433,7 +1437,7 @@ GuiDataFileOpenDialog::openDataFile(QWidget* parentWidget, const QString specFil
       }
    }
    
-   GuiFilesModified fm;;
+   GuiFilesModified fm;
    
    try {
       if (specFileTag == SpecFile::getAreaColorFileTag()) {
@@ -2090,6 +2094,10 @@ GuiDataFileOpenDialog::openDataFile(QWidget* parentWidget, const QString specFil
          theMainWindow->getBrainSet()->readTopologyFile(name, tt, append, update);
          fm.setTopologyModified();
          QApplication::restoreOverrideCursor();
+      }
+      else if (specFileTag == SpecFile::getTrajectoryFileTag()) {
+         theMainWindow->getBrainSet()->readTrajectoryFile(name);
+         fm.setTrajectoryModified();
       }
       else if (specFileTag == SpecFile::getTransformationMatrixFileTag()) {
          theMainWindow->getBrainSet()->readTransformationMatrixFile(name, append, update);

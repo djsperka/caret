@@ -226,7 +226,11 @@ BrainModelVolumeToSurfaceConverter::generateSureFitSurface(const bool maxPolygon
    // Shrinker - does this actually do anything ?
    //
    vtkImageShrink3D* shrinker = vtkImageShrink3D::New();
+#ifdef HAVE_VTK6
+   shrinker->SetInputData(sp);
+#else
    shrinker->SetInput(sp);
+#endif
    shrinker->SetShrinkFactors(1, 1, 1);
    shrinker->AveragingOn();
 
@@ -236,8 +240,11 @@ BrainModelVolumeToSurfaceConverter::generateSureFitSurface(const bool maxPolygon
    vtkImageGaussianSmooth* gaussian = vtkImageGaussianSmooth::New();
    gaussian->SetDimensionality(3);
    gaussian->SetStandardDeviation(0);
+#ifdef HAVE_VTK6
+   gaussian->SetInputConnection(shrinker->GetOutputPort());
+#else
    gaussian->SetInput(shrinker->GetOutput());
-   
+#endif
    gaussian->Update();
    vtkImageData* gaussOut = gaussian->GetOutput();
    gaussOut->GetBounds(bounds);
@@ -253,7 +260,11 @@ BrainModelVolumeToSurfaceConverter::generateSureFitSurface(const bool maxPolygon
    // Marching cubes converts volume to a surface
    //
    vtkMarchingCubes* mc = vtkMarchingCubes::New();
+#ifdef HAVE_VTK6
+   mc->SetInputConnection(gaussian->GetOutputPort());
+#else
    mc->SetInput(gaussian->GetOutput());
+#endif
    //mc->SetValue(0, 511.5);
    mc->SetValue(0, 127.5);
    mc->ComputeScalarsOff();
@@ -264,17 +275,28 @@ BrainModelVolumeToSurfaceConverter::generateSureFitSurface(const bool maxPolygon
    // Clean up surface created by marching cubes
    //
    vtkCleanPolyData* clean = vtkCleanPolyData::New();
+#ifdef HAVE_VTK6
+   clean->SetInputConnection(mc->GetOutputPort());
+#else
    clean->SetInput(mc->GetOutput());
-   
+#endif
    //
    // Make sure mesh is only triangles
    //
    vtkTriangleFilter *triangleFilter = vtkTriangleFilter::New();
+#ifdef HAVE_VTK6
+   triangleFilter->SetInputConnection(clean->GetOutputPort());
+#else
    triangleFilter->SetInput(clean->GetOutput());
+#endif
    if (DebugControl::getDebugOn()) {
       triangleFilter->Update();
       vtkPolyDataWriter* writer = vtkPolyDataWriter::New();
+#ifdef HAVE_VTK6
+      writer->SetInputConnection(triangleFilter->GetOutputPort());
+#else
       writer->SetInput(triangleFilter->GetOutput());
+#endif
       writer->SetFileName("surface_undecimated.vtk");
       writer->Write();
       writer->Delete();
@@ -303,7 +325,11 @@ BrainModelVolumeToSurfaceConverter::generateSureFitSurface(const bool maxPolygon
       //if (maxPolygonsFlag) {
       //   errorVal = 0.0;
       //}
+#ifdef HAVE_VTK6
+      decimater->SetInputConnection(triangleFilter->GetOutputPort());
+#else
       decimater->SetInput(triangleFilter->GetOutput());
+#endif
       decimater->SetTargetReduction(0.90);
       decimater->PreserveTopologyOn();
       decimater->SetFeatureAngle(30.0);  //45.0); //1);   // orig == 30
@@ -321,7 +347,11 @@ BrainModelVolumeToSurfaceConverter::generateSureFitSurface(const bool maxPolygon
          decimater->Update();
          decimater->PrintSelf(std::cout, static_cast<vtkIndent>(3));
          vtkPolyDataWriter* writer = vtkPolyDataWriter::New();
+#ifdef HAVE_VTK6
+         writer->SetInputConnection(decimater->GetOutputPort());
+#else
          writer->SetInput(decimater->GetOutput());
+#endif
          writer->SetFileName("surface_decimated.vtk");
          writer->Write();
          writer->Delete();
@@ -333,10 +363,18 @@ BrainModelVolumeToSurfaceConverter::generateSureFitSurface(const bool maxPolygon
    //
    vtkCleanPolyData* clean2 = vtkCleanPolyData::New();
    if (decimater != NULL) {
-      clean2->SetInput(decimater->GetOutput());
+#ifdef HAVE_VTK6
+	      clean2->SetInputConnection(decimater->GetOutputPort());
+#else
+	      clean2->SetInput(decimater->GetOutput());
+#endif
    }
    else {
+#ifdef HAVE_VTK6
+      clean2->SetInputConnection(triangleFilter->GetOutputPort());
+#else
       clean2->SetInput(triangleFilter->GetOutput());
+#endif
    }
    
    //
@@ -348,7 +386,11 @@ BrainModelVolumeToSurfaceConverter::generateSureFitSurface(const bool maxPolygon
    // Compute normals on the surface
    //
    vtkPolyDataNormals* rawNormals = vtkPolyDataNormals::New();
+#ifdef HAVE_VTK6
+   rawNormals->SetInputConnection(clean2->GetOutputPort());
+#else
    rawNormals->SetInput(clean2->GetOutput());
+#endif
    rawNormals->SplittingOff();
    rawNormals->ConsistencyOn();
    rawNormals->ComputePointNormalsOn();
@@ -366,7 +408,11 @@ BrainModelVolumeToSurfaceConverter::generateSureFitSurface(const bool maxPolygon
   
    if (DebugControl::getDebugOn()) {
       vtkPolyDataWriter* writer = vtkPolyDataWriter::New();
+#ifdef HAVE_VTK6
+      writer->SetInputData(rawPolyDataSurface);
+#else
       writer->SetInput(rawPolyDataSurface);
+#endif
       writer->SetFileName("raw.vtk");
       writer->Write();
       writer->Delete();
@@ -469,7 +515,11 @@ BrainModelVolumeToSurfaceConverter::generateSureFitSurface(const bool maxPolygon
    // Smooth the surface
    //
    vtkSmoothPolyDataFilter* smooth = vtkSmoothPolyDataFilter::New();
+#ifdef HAVE_VTK6
+   smooth->SetInputData(rawPolyDataSurface);
+#else
    smooth->SetInput(rawPolyDataSurface);
+#endif
    smooth->SetNumberOfIterations(10);
    smooth->SetRelaxationFactor(0.2);
    smooth->SetFeatureAngle(180.0);
@@ -481,7 +531,11 @@ BrainModelVolumeToSurfaceConverter::generateSureFitSurface(const bool maxPolygon
    // Compute normals on the surface
    //
    vtkPolyDataNormals* normals = vtkPolyDataNormals::New();
+#ifdef HAVE_VTK6
+   normals->SetInputConnection(smooth->GetOutputPort());
+#else
    normals->SetInput(smooth->GetOutput());
+#endif
    normals->SplittingOff();
    normals->ConsistencyOn();
    normals->ComputePointNormalsOn();
@@ -507,10 +561,18 @@ BrainModelVolumeToSurfaceConverter::generateSureFitSurface(const bool maxPolygon
       plane->SetNormal(0.0, -1.0, 0.0);
       vtkClipPolyData* clipper = vtkClipPolyData::New();
       clipper->SetClipFunction(plane);
+#ifdef HAVE_VTK6
+      clipper->SetInputData(polyDataSurface);
+#else
       clipper->SetInput(polyDataSurface);
+#endif
       clipper->Update();
       vtkPolyDataWriter* writer = vtkPolyDataWriter::New();
+#ifdef HAVE_VTK6
+      writer->SetInputConnection(clipper->GetOutputPort());
+#else
       writer->SetInput(clipper->GetOutput());
+#endif
       writer->SetFileName("surface_cut.vtk");
       writer->Write();
       writer->Delete();
@@ -623,7 +685,11 @@ BrainModelVolumeToSurfaceConverter::generateVtkModel(const bool maxPolygonsFlag)
    // Shrinker - does this actually do anything ?
    //
    vtkImageShrink3D* shrinker = vtkImageShrink3D::New();
+#ifdef HAVE_VTK6
+   shrinker->SetInputData(sp);
+#else
    shrinker->SetInput(sp);
+#endif
    shrinker->SetShrinkFactors(1, 1, 1);
    shrinker->AveragingOn();
 
@@ -633,13 +699,21 @@ BrainModelVolumeToSurfaceConverter::generateVtkModel(const bool maxPolygonsFlag)
    vtkImageGaussianSmooth* gaussian = vtkImageGaussianSmooth::New();
    gaussian->SetDimensionality(3);
    gaussian->SetStandardDeviation(0);
+#ifdef HAVE_VTK6
+   gaussian->SetInputConnection(shrinker->GetOutputPort());
+#else
    gaussian->SetInput(shrinker->GetOutput());
+#endif
    
    //
    // Marching cubes converts volume to a surface
    //
    vtkMarchingCubes* mc = vtkMarchingCubes::New();
+#ifdef HAVE_VTK6
+   mc->SetInputConnection(gaussian->GetOutputPort());
+#else
    mc->SetInput(gaussian->GetOutput());
+#endif
    //mc->SetValue(0, 511.5);
    mc->SetValue(0, 127.5);
    mc->ComputeScalarsOff();
@@ -650,13 +724,21 @@ BrainModelVolumeToSurfaceConverter::generateVtkModel(const bool maxPolygonsFlag)
    // Clean up surface created by marching cubes
    //
    vtkCleanPolyData* clean = vtkCleanPolyData::New();
+#ifdef HAVE_VTK6
+   clean->SetInputConnection(mc->GetOutputPort());
+#else
    clean->SetInput(mc->GetOutput());
+#endif
    
    //
    // Make sure mesh is only triangles
    //
    vtkTriangleFilter *triangleFilter = vtkTriangleFilter::New();
+#ifdef HAVE_VTK6
+   triangleFilter->SetInputConnection(clean->GetOutputPort());
+#else
    triangleFilter->SetInput(clean->GetOutput());
+#endif
 
    //
    // See if the surface should be decimated
@@ -668,7 +750,11 @@ BrainModelVolumeToSurfaceConverter::generateVtkModel(const bool maxPolygonsFlag)
          decimater->DebugOn();
       }
       const double errorVal = 0.001;
+#ifdef HAVE_VTK6
+      decimater->SetInputConnection(triangleFilter->GetOutputPort());
+#else
       decimater->SetInput(triangleFilter->GetOutput());
+#endif
       decimater->SetTargetReduction(0.90);
       decimater->PreserveTopologyOn();
       decimater->SetFeatureAngle(30);
@@ -687,17 +773,29 @@ BrainModelVolumeToSurfaceConverter::generateVtkModel(const bool maxPolygonsFlag)
    //
    vtkCleanPolyData* clean2 = vtkCleanPolyData::New();
    if (decimater != NULL) {
-      clean2->SetInput(decimater->GetOutput());
+#ifdef HAVE_VTK6
+	      clean2->SetInputConnection(decimater->GetOutputPort());
+#else
+	      clean2->SetInput(decimater->GetOutput());
+#endif
    }
    else {
-      clean2->SetInput(triangleFilter->GetOutput());
+#ifdef HAVE_VTK6
+	      clean2->SetInputConnection(triangleFilter->GetOutputPort());
+#else
+	      clean2->SetInput(triangleFilter->GetOutput());
+#endif
    }
    
    //
    // Smooth the surface
    //
    vtkSmoothPolyDataFilter* smooth = vtkSmoothPolyDataFilter::New();
+#ifdef HAVE_VTK6
+   smooth->SetInputConnection(clean2->GetOutputPort());
+#else
    smooth->SetInput(clean2->GetOutput());
+#endif
    smooth->SetNumberOfIterations(10);
    smooth->SetRelaxationFactor(0.2);
    smooth->SetFeatureAngle(180.0);
@@ -709,7 +807,11 @@ BrainModelVolumeToSurfaceConverter::generateVtkModel(const bool maxPolygonsFlag)
    // Compute normals on the surface
    //
    vtkPolyDataNormals* rawNormals = vtkPolyDataNormals::New();
+#ifdef HAVE_VTK6
+   rawNormals->SetInputConnection(smooth->GetOutputPort());
+#else
    rawNormals->SetInput(smooth->GetOutput());
+#endif
    rawNormals->SplittingOff();
    rawNormals->ConsistencyOn();
    rawNormals->ComputePointNormalsOn();

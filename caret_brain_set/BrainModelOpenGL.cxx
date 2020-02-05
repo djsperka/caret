@@ -85,12 +85,19 @@
 #include "SurfaceShapeFile.h"
 #include "VectorFile.h"
 #include "TopologyHelper.h"
+#include "TrajectoryFile.h"
 #include "TransformationMatrixFile.h"
 #include "VtkModelFile.h"
 
 #include "vtkMath.h"
 #include "vtkTransform.h"
 #include "vtkTriangle.h"
+
+// These are utility functions to help generate cylinder points
+void generateCircle(double center[3], double r, int N, double *pts, double *norms, bool bOutward);
+void intersectLinePlane(double p0[3], double n[3], double p1[3], double p2[3], double p[3]);
+void dumpvec2(std::string s, double f[3]);
+
 
 /* Number of slices used in Cylinder,Disk,Cone quadrics */
 static const int QUADRIC_NUMBER_OF_SLICES = 4;
@@ -1592,9 +1599,12 @@ BrainModelOpenGL::drawBrainModelSurface(BrainModelSurface* bms,
    }
 
    drawBorders(bms);
-   
+
+   // djs draw electrode trajectory...
+   drawElectrodeTrajectory(bms);
+
    //drawCellAndFociProjections(bms);
-   
+
    drawCuts();
    
    drawGeodesicPath(cf);
@@ -3047,6 +3057,10 @@ BrainModelOpenGL::drawVolumeSliceOverlayAndUnderlay(BrainModelVolume* bmv,
    // Draw the identify symbols
    //
    drawVolumeIdentifySymbols(volumeSliceAxis, volumeSliceCoordinate);
+
+   /// djs draw nodes found within electrode trajectory cylinder
+   ///
+   drawVolumeElectrodeTrajectory(bmv, volumeSliceAxis, volumeSliceCoordinate);
 }
 
 /**
@@ -8913,6 +8927,491 @@ BrainModelOpenGL::drawCuts()
    }
 }
 
+
+/**
+ * Draw the skull surface and electrode trajectory
+ */
+void
+BrainModelOpenGL::drawElectrodeTrajectory(BrainModelSurface* s)
+{
+	double matrix[16];
+	double T[3][3];
+	const int nsides = 20;
+	double vtemp[3];
+	ANNidxArray idx;
+	int nidx;
+	double xc[3], yc[3], zc[3], zrest;
+	double dCenter[3];
+	double dTarget[3];
+	double dEntry[3];
+	double dID, dOD, dH;
+	double gridx, gridy;
+	double dPlanePt[3], dPlaneNormal[3], dPlaneNormalRot[3];
+	TrajectoryFile *ptf = s->getBrainSet()->getTrajectoryFile();
+	ElectrodeTrajectoryP ep = ptf->getActiveTrajectory();
+
+	if (!ep) return;
+
+	const int brainModelIndex = brainSet->getBrainModelIndex(s);
+	if (brainModelIndex < 0)
+	{
+		std::cout << "PROGRAM ERROR: invalid brain model index at " << __LINE__
+				<< " in " << __FILE__ << std::endl;
+		return;
+	}
+
+  	// Only draw skull surface if selection mask is off
+  	if (selectionMask == SELECTION_MASK_OFF)
+  	{
+		if (s->getSurfaceType() == BrainModelSurface::SURFACE_TYPE_FIDUCIAL)
+		{
+			double xyz[3];
+			int i;
+
+			if (ep->getDisplaySkull())
+			{
+				const std::multimap<int, int>& mapFaces = ptf->getSkullFaceMap();
+				std::set<int> uniqueFaces;
+				std::set<int> uniqueFacesAnnulus;
+
+				// Find faces present in the nearby list of vertices
+				ep->getSkullNearbyIdx(&idx, &nidx);
+				if (nidx > 0)
+				{
+					for (i=0; i<nidx; i++)
+					{
+						std::pair< std::map<int, int>::const_iterator, std::map<int, int>::const_iterator > p;
+						p = mapFaces.equal_range(idx[i]);
+						for ( std::map<int, int>::const_iterator it = p.first; it!= p.second; it++)
+						{
+							uniqueFaces.insert(it->second);
+						}
+					}
+				}
+
+				// Now get faces present in the annulus list of indices, but which are NOT in the nearby list.
+				ep->getSkullAnnulusIdx(&idx, &nidx);
+				if (nidx > 0)
+				{
+					for (i=0; i<nidx; i++)
+					{
+						std::pair< std::map<int, int>::const_iterator, std::map<int, int>::const_iterator > p;
+						p = mapFaces.equal_range(idx[i]);
+						for ( std::map<int, int>::const_iterator it = p.first; it!= p.second; it++)
+						{
+							// Only add the face to the annulus list if its NOT in the other list
+							if (uniqueFaces.find(it->second) == uniqueFaces.end())
+							{
+								uniqueFacesAnnulus.insert(it->second);
+							}
+						}
+					}
+				}
+
+				// Now draw
+
+				float fv1[3], fv2[3], fv3[3];
+				float fn1[3], fn2[3], fn3[3];
+
+				glEnable(GL_LIGHTING);
+				glEnable(GL_COLOR_MATERIAL);
+				glColor3ub(ep->getSkullSurfaceColor().red(), ep->getSkullSurfaceColor().green(), ep->getSkullSurfaceColor().blue());
+				glBegin(GL_TRIANGLES);
+				for (std::set<int>::iterator it=uniqueFaces.begin(); it != uniqueFaces.end(); it++)
+				{
+					ptf->getFace(*it, fv1, fv2, fv3, fn1, fn2, fn3);
+					glVertex3fv(fv1);
+					glNormal3fv(fn1);
+					glVertex3fv(fv2);
+					glNormal3fv(fn2);
+					glVertex3fv(fv3);
+					glNormal3fv(fn3);
+				}
+				glEnd();
+
+				glColor3ub(ep->getSkullSurfaceAnnulusColor().red(), ep->getSkullSurfaceAnnulusColor().green(), ep->getSkullSurfaceAnnulusColor().blue());
+				glBegin(GL_TRIANGLES);
+				for (std::set<int>::iterator it=uniqueFacesAnnulus.begin(); it != uniqueFacesAnnulus.end(); it++)
+				{
+					ptf->getFace(*it, fv1, fv2, fv3, fn1, fn2, fn3);
+					glVertex3fv(fv1);
+					glNormal3fv(fn1);
+					glVertex3fv(fv2);
+					glNormal3fv(fn2);
+					glVertex3fv(fv3);
+					glNormal3fv(fn3);
+				}
+				glEnd();
+
+				glDisable(GL_LIGHTING);
+				glDisable(GL_COLOR_MATERIAL);
+			}
+
+			ep->getCylinderCoords(xc, yc, zc, &zrest);
+			ep->getCylinderCenter(dCenter);
+			ep->getEntry(dEntry);
+			ep->getTarget(dTarget);
+			ep->getGridEntry(&gridx, &gridy);
+			ep->getCylinderFitValues(dPlanePt, dPlaneNormal);		// plane normal in world coord
+			dID = ep->getCylinderID();
+			dOD = ep->getCylinderOD();
+			dH = ep->getCylinderH();
+
+			// Set up a transformation matrix and rotate cylinder fit plane normal
+			for (i=0; i<3; i++)
+			{
+				T[0][i] = xc[i];
+				T[1][i] = yc[i];
+				T[2][i] = zc[i];
+			}
+			vtkMath::Multiply3x3(T, dPlaneNormal, dPlaneNormalRot);
+			// Set up the modelview matrix.
+			// Cylinder coords become the rotation matrix.
+			// Cylinder center becomes the translation center.
+
+			matrix[0] = xc[0]; matrix[1] = xc[1]; matrix[2] = xc[2]; matrix[3] = 0;
+			matrix[4] = yc[0]; matrix[5] = yc[1]; matrix[6] = yc[2]; matrix[7] = 0;
+			matrix[8] = zc[0]; matrix[9] = zc[1]; matrix[10] = zc[2]; matrix[11] = 0;
+			matrix[12] = dCenter[0]; matrix[13] = dCenter[1]; matrix[14] = dCenter[2]; matrix[15] = 1;
+
+			// display cylinder
+			if (ep->getDisplayCylinder())
+			{
+				// Generate points for the top and bottom of cylinder
+				double dTopInner[nsides*3], dTopInnerNorms[nsides*3];
+				double dTopOuter[nsides*3], dTopOuterNorms[nsides*3];
+				double dBotInner[nsides*3], dBotInnerNorms[nsides*3];
+				double dBotOuter[nsides*3], dBotOuterNorms[nsides*3];
+				double dRestInner[nsides*3];
+				double dRestOuter[nsides*3];
+//djs 12-22-08	liftoff	problem		float center[3] = { 0, 0, zrest+fH };
+				double center[3] = { 0, 0, dH };
+				double p0[3];
+				generateCircle(center, dID/2, nsides, dTopInner, dTopInnerNorms, false);
+				generateCircle(center, dOD/2, nsides, dTopOuter, dTopOuterNorms, true);
+				//djs 12-22-08	liftoff	problem				center[2] = zrest;
+				center[2] = 0;
+				generateCircle(center, dID/2, nsides, dBotInner, dBotInnerNorms, false);
+				generateCircle(center, dOD/2, nsides, dBotOuter, dBotOuterNorms, true);
+
+				// Now get intersections with the fit plane
+				for (i=0; i<3; i++) p0[i] = dPlanePt[i] - dCenter[i];
+				for (i=0; i<nsides; i++)
+				{
+					intersectLinePlane(p0, dPlaneNormalRot, dTopInner+i*3, dBotInner+i*3, dRestInner+i*3);
+					intersectLinePlane(p0, dPlaneNormalRot, dTopOuter+i*3, dBotOuter+i*3, dRestOuter+i*3);
+				}
+
+				// Now start drawing
+				glEnable(GL_LIGHTING);
+				glEnable(GL_COLOR_MATERIAL);
+				glPushMatrix();
+				glMultMatrixd(matrix);
+
+				// ...top
+				glColor3ub(ep->getCylinderEndsColor().red(), ep->getCylinderEndsColor().green(), ep->getCylinderEndsColor().blue());
+				glBegin(GL_QUAD_STRIP);
+				for (i=0; i<nsides; i++)
+				{
+					glVertex3dv(dTopInner+i*3);
+					glNormal3dv(dTopInnerNorms+i*3);
+					glVertex3dv(dTopOuter+i*3);
+					glNormal3dv(dTopOuterNorms+i*3);
+				}
+				glVertex3dv(dTopInner);
+				glNormal3dv(dTopInnerNorms);
+				glVertex3dv(dTopOuter);
+				glNormal3dv(dTopOuterNorms);
+				glEnd();
+
+				// ...bottom - reverse order of points
+				glColor3ub(ep->getCylinderEndsColor().red(), ep->getCylinderEndsColor().green(), ep->getCylinderEndsColor().blue());
+				glBegin(GL_QUAD_STRIP);
+				for (i=0; i<nsides; i++)
+				{
+					glVertex3dv(dRestOuter+i*3);
+					glNormal3dv(dBotOuterNorms+i*3);
+					glVertex3dv(dRestInner+i*3);
+					glNormal3dv(dBotInnerNorms+i*3);
+				}
+				glVertex3dv(dRestOuter);
+				glNormal3dv(dBotOuterNorms);
+				glVertex3dv(dRestInner);
+				glNormal3dv(dBotInnerNorms);
+				glEnd();
+
+				// ...outside
+				glColor3ub(ep->getCylinderSidesColor().red(), ep->getCylinderSidesColor().green(), ep->getCylinderSidesColor().blue());
+				glBegin(GL_QUAD_STRIP);
+				for (i=0; i<nsides; i++)
+				{
+					glVertex3dv(dTopOuter+i*3);
+					glNormal3dv(dTopOuterNorms+i*3);
+					glVertex3dv(dRestOuter+i*3);
+					glNormal3dv(dBotOuterNorms+i*3);
+				}
+				glVertex3dv(dTopOuter);
+				glNormal3dv(dTopOuterNorms);
+				glVertex3dv(dRestOuter);
+				glNormal3dv(dBotOuterNorms);
+				glEnd();
+
+				// ...inside
+				glColor3ub(ep->getCylinderSidesColor().red(), ep->getCylinderSidesColor().green(), ep->getCylinderSidesColor().blue());
+				glBegin(GL_QUAD_STRIP);
+				for (i=0; i<nsides; i++)
+				{
+					glVertex3dv(dTopInner+i*3);
+					glNormal3dv(dTopInnerNorms+i*3);
+					glVertex3dv(dRestInner+i*3);
+					glNormal3dv(dBotInnerNorms+i*3);
+				}
+				glVertex3dv(dTopInner);
+				glNormal3dv(dTopInnerNorms);
+				glVertex3dv(dRestInner);
+				glNormal3dv(dBotInnerNorms);
+				glEnd();
+
+				// symmetry axis
+				glBegin(GL_LINES);
+				glColor3ub(0, 0, 0);
+				glVertex3f(0, 0, 0);
+				glVertex3f(0, 0, 1.5*(dH + zrest));
+				glEnd();
+
+				// Disable lighting here so the crosshairs and symmetry axis don't get the
+				// lighting funkiness.
+				glDisable(GL_LIGHTING);
+				glDisable(GL_COLOR_MATERIAL);
+
+				// crosshairs that represent grid orientation. Heavier line is the "north" direction
+				// of the grid.
+				// 12-17-08 Negative sign on rotation angle is because our definition of a positive rotation of the
+				// grid is opposite that of OpenGL.
+				// 12-22-08 Draw North line as black, all others as white.
+				glRotatef(-ep->getGridRotation(), 0, 0, 1);
+				glLineWidth(1.0);
+				glColor3ub(0, 0, 0);
+				glBegin(GL_LINES);
+				glVertex3d(0, 0, dH + 0.1);
+				glVertex3d(0, 0.5*dOD, dH + 0.1);
+				glEnd();
+				glLineWidth(1.0);
+				glColor3ub(255, 255, 255);
+				glBegin(GL_LINES);
+				glVertex3d(0, 0, dH + 0.1);
+				glVertex3d(0, -0.5*dOD, dH + 0.1);
+				glVertex3d(0, 0, dH + 0.1);
+				glVertex3d(0.5*dOD, 0, dH + 0.1);
+				glVertex3d(0, 0, dH + 0.1);
+				glVertex3d(-0.5*dOD, 0, dH + 0.1);
+				glEnd();
+
+				glPopMatrix();
+			}
+
+			if (ep->getDisplayTrajectory())
+			{
+				double b[3];
+				double d;
+				double gridx, gridy;
+				double entryDepth;
+				ep->getGridEntry(&gridx, &gridy);
+				for (i=0; i<3; i++) vtemp[i] = dCenter[i] - dTarget[i];
+				entryDepth = vtkMath::Dot(vtemp, zc); // actually this is the opposite sign than we'll need.
+				d = vtkMath::Normalize(vtemp);
+				for (i=0; i<3; i++) b[i] = dTarget[i] + (d+zrest+dH)*vtemp[i];
+				glColor3ub(ep->getPathLineColor().red(), ep->getPathLineColor().green(), ep->getPathLineColor().blue());
+
+				// push the cylinder coords matrix, along with a rotation matrix for the grid rotation.
+				glPushMatrix();
+				glMultMatrixd(matrix);
+				glRotated(-ep->getGridRotation(), 0, 0, 1);
+				glBegin(GL_LINES);
+				glVertex3d(gridx, gridy, -entryDepth);
+				glVertex3d(gridx, gridy, d+zrest+dH);
+				glEnd();
+				glPopMatrix();
+			}
+
+
+			if (ep->getDisplayBrain())
+			{
+				// draw brain surface
+				glColor3ub(ptf->getBrainSurfaceColor().red(), ptf->getBrainSurfaceColor().green(), ptf->getBrainSurfaceColor().blue());
+				glPointSize(1.0);
+				glBegin(GL_POINTS);
+				for (i=0; i<ptf->getNumBrainVertices(); i++)
+				{
+					ptf->getBrainVertex(i, xyz);
+					glVertex3dv(xyz);
+				}
+				glEnd();
+			}
+		}
+		else if (s->getSurfaceType() == BrainModelSurface::SURFACE_TYPE_FLAT)
+		{
+			const std::map<double, int>& mapPathNodes = ep->getPathNodes();
+			const CoordinateFile* cf = s->getCoordinateFile();
+			double xyz[3];
+
+			if (ep->getDisplayTrajectory())
+			{
+				// Draw nodes within tolerance of path. mapPathNodes is a map of nodes indexed by depth as measured from entry point.
+				// The actual depth only matters if the depth tool is in use -- in that case compute the actual depth and find all nodes
+				// within the depth tool tolerance of that depth (depth tool tolerance is different than the path radius tolerance).
+				// If the depth tool is not in use, use all nodes. The depthMin/depthMax should be set to ridiculous values so that they will
+				// catch all nodes (when depth tool not in use).
+				if (mapPathNodes.size() > 0)
+				{
+					double ddepthMin = -999999.99;
+					double ddepthMax = 999999.99;
+
+					// check if the depth tool is on. If its checked on, then calculate min/max
+					// depth values.
+					if (ep->getUseDepthTool())
+					{
+						double ddepth = (float)ep->getDepthToolDepthPct()/100.0f * ep->getMaxPenetrationDepth();
+						double ddepthTol = ep->getDepthToolTolerance();
+						ddepthMin = ddepth - ddepthTol;
+						ddepthMax = ddepth + ddepthTol;
+					}
+					glColor3ub(ep->getFlatMapNodesColor().red(), ep->getFlatMapNodesColor().green(), ep->getFlatMapNodesColor().blue());
+					glPointSize(2.0);
+					glBegin(GL_POINTS);
+					for (std::map<double, int>::const_iterator it=mapPathNodes.begin(); it!=mapPathNodes.end(); it++)
+					{
+						int iNode = (*it).second;
+						double ddist = (*it).first;
+
+						if (ddist > ddepthMin && ddist < ddepthMax)
+						{
+							// Get coord of this node from flat file.....???????
+							cf->getCoordinate(iNode, xyz);
+							glVertex3dv(xyz);
+						}
+					}
+					glEnd();
+				}
+			}
+		}
+  	}
+	return;
+}
+
+
+
+/**
+ * Draw electrode trajectory and selected nodes on volume
+ */
+void BrainModelOpenGL::drawVolumeElectrodeTrajectory(BrainModelVolume* bmv, const VolumeFile::VOLUME_AXIS volumeSliceAxis, const float axisCoord)
+{
+	int iaxis;			// index of coordinate which is perp to screen
+	int iaxisX, iaxisY;	// indices of axes in plane of screen - used for drawing voxels
+	float dTrajectoryVolumeTolerance = 1.0;
+	float spacing[3];
+	float origin[3];
+	float voxelX, voxelY;
+	float voxelSizeX = 1.0;
+	float voxelSizeY = 1.0;
+	float voxelOriginX = 1.0;
+	float voxelOriginY = 1.0;
+	VolumeFile *vf;
+	TrajectoryFile *ptf = brainSet->getTrajectoryFile();
+	ElectrodeTrajectoryP ep = ptf->getActiveTrajectory();
+	if (!ep) return;
+
+   //
+   // Get the origin and spacing
+   //
+   vf = bmv->getUnderlayVolumeFile();
+   if (NULL == bmv) return;
+   vf->getOrigin(origin);
+   vf->getSpacing(spacing);
+
+   switch(volumeSliceAxis)
+   {
+      case VolumeFile::VOLUME_AXIS_X:  // PARASAGITTAL
+			iaxis = 0;
+			iaxisX = 1;
+			iaxisY = 2;
+         voxelSizeX = spacing[1];
+         voxelSizeY = spacing[2];
+         voxelOriginX = origin[1];
+         voxelOriginY = origin[2];
+         break;
+      case VolumeFile::VOLUME_AXIS_Y:  // CORONAL
+			iaxis = 1;
+			iaxisX = 0;
+			iaxisY = 2;
+         voxelSizeX = spacing[0];
+         voxelSizeY = spacing[2];
+         voxelOriginX = origin[0];
+         voxelOriginY = origin[2];
+         break;
+      case VolumeFile::VOLUME_AXIS_Z:  // HORIZONTAL
+			iaxis = 2;
+			iaxisX = 0;
+			iaxisY = 1;
+         voxelSizeX = spacing[0];
+         voxelSizeY = spacing[1];
+         voxelOriginX = origin[0];
+         voxelOriginY = origin[1];
+			break;
+		default:
+			std::cout << "BrainModelOpenGL::drawVolumeElectrodeTrajectory(): UNKNOWN AXIS" << std::endl;
+			break;
+   }
+
+
+	const std::map<double, int>& mapPathNodes = ep->getPathNodes();
+	const CoordinateFile* cf = brainSet->getActiveFiducialSurface()->getCoordinateFile();
+	float xyz[3];
+	if (mapPathNodes.size() > 0)
+	{
+		// TODO: Get color and size from dialog. Also LINE_LOOP or POLYGON or POINTS
+		glColor3ub(ep->getVolumeNodesColor().red(), ep->getVolumeNodesColor().green(), ep->getVolumeNodesColor().blue());
+		for (std::map<double, int>::const_iterator it=mapPathNodes.begin(); it!=mapPathNodes.end(); it++)
+		{
+			int iNode = (*it).second;
+			double dDepth = it->first;
+
+			// If depth tool in use, check depth against penetration depth. If outside
+			// tolerance skip this node
+			if (ep->getUseDepthTool())
+			{
+				if (abs(dDepth - ep->getPenetrationDepth()) > ep->getDepthToolTolerance())
+				{
+					continue;
+				}
+			}
+
+			// Get coord of this node.
+			cf->getCoordinate(iNode, xyz);
+			if (fabs(xyz[iaxis]-axisCoord) < dTrajectoryVolumeTolerance)
+			{
+				// these are the voxel numbers (0...) in the drawing-x and -y directions
+				//
+				int nvoxelX = 0;
+				int nvoxelY = 0;
+
+				nvoxelX = (int)((xyz[iaxisX]-voxelOriginX)/voxelSizeX);
+				nvoxelY = (int)((xyz[iaxisY]-voxelOriginY)/voxelSizeY);
+
+				voxelX = nvoxelX * voxelSizeX + voxelOriginX;
+				voxelY = nvoxelY * voxelSizeY + voxelOriginY;
+
+				glBegin(GL_POLYGON);
+				glVertex2f(voxelX, voxelY);
+				glVertex2f(voxelX + voxelSizeX, voxelY);
+				glVertex2f(voxelX + voxelSizeX, voxelY + voxelSizeY);
+				glVertex2f(voxelX, voxelY + voxelSizeY);
+				glEnd();
+			}
+		}
+	}
+}
+
 /**
  * Draw the borders.
  */
@@ -12932,3 +13431,58 @@ BrainModelOpenGL::getValidPointSize(const float pointSizeIn) const
    return pointSize;
 }
       
+/**
+ *	Generate a circle in xy plane.
+ */
+
+void generateCircle(double center[3], double r, int N, double *pts, double *norms, bool bOutward)
+{
+	int i, j;
+	double alpha = 2*vtkMath::Pi()/N;
+	double c, s, a;
+	for (i=0; i<N; i++)
+	{
+		j = i*3;			// index into pts and norms
+		a = i*alpha;
+		c = cos(a);
+		s = sin(a);
+
+		pts[j] = center[0] + r*c;
+		pts[j+1] = center[1] + r*s;
+		pts[j+2] = center[2];
+
+		if (bOutward)
+		{
+			norms[j] = c;
+			norms[j+1] = s;
+			norms[j+2] = 0;
+		}
+		else
+		{
+			norms[j] = -c;
+			norms[j+1] = -s;
+			norms[j+2] = 0;
+		}
+	}
+}
+
+/**
+ *	Find intersection between line and plane
+ */
+
+void intersectLinePlane(double p0[3], double n[3], double p1[3], double p2[3], double p[3])
+{
+	double a[3], b[3], da, db, t;
+	int i;
+	for (i=0; i<3; i++) a[i] = p2[i] - p1[i];
+	for (i=0; i<3; i++) b[i] = p0[i] - p1[i];
+	da = vtkMath::Dot(a, n);
+	db = vtkMath::Dot(b, n);
+	t = db/da;
+	for (i=0; i<3; i++) p[i] = p1[i] + t * a[i];
+}
+
+void dumpvec2(std::string s, double d[3])
+{
+	std::cout << s << " " << d[0] << ", " << d[1] << ", " << d[2] << std::endl;
+}

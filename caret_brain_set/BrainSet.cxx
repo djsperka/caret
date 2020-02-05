@@ -132,6 +132,7 @@
 #include "RgbPaintFile.h"
 #include "SceneFile.h"
 #include "SectionFile.h"
+#include "TrajectoryFile.h"
 #include "StatisticRandomNumber.h"
 #include "StringUtilities.h"
 #include "StudyCollectionFile.h"
@@ -371,6 +372,7 @@ BrainSet::constructBrainSet()
    studyMetaDataFile      = new StudyMetaDataFile;
    surfaceShapeFile       = new SurfaceShapeFile;
    topographyFile         = new TopographyFile;
+   trajectoryFile         = new TrajectoryFile;
    transformationMatrixFile = new TransformationMatrixFile;
    vocabularyFile         = new VocabularyFile;
    wustlRegionFile        = new WustlRegionFile;
@@ -683,6 +685,7 @@ BrainSet::~BrainSet()
    delete studyMetaDataFile;
    delete surfaceShapeFile;
    delete topographyFile;
+   delete trajectoryFile;
    delete transformationMatrixFile;
    delete vocabularyFile;
    delete wustlRegionFile;
@@ -5757,6 +5760,62 @@ BrainSet::readFociSearchFile(const QString& name,
    }
 }
 
+
+/**
+ * Read an electrode trajectory file.
+ */
+void
+BrainSet::readTrajectoryFile(const QString& name) throw (FileException)
+{
+	float xyzOrigin[3];
+	double xyzD[3];
+	// check for volume anatomy file
+	const VolumeFile* vf = getVolumeAnatomyFile(0);
+	if (NULL == vf)
+	{
+		throw FileException(name, "Cannot load trajectory file without a volume anatomy file already loaded!");
+	}
+	else
+	{
+		vf->getOrigin(xyzOrigin);
+		if (DebugControl::getDebugOn())
+		{
+			std::cout << "Volume origin is " << xyzOrigin[0] << "," << xyzOrigin[1] << "," << xyzOrigin[2] << std::endl;
+		}
+		for (int i=0; i<3; i++) xyzD[i] = xyzOrigin[i];
+		trajectoryFile->setVolumeOrigin(xyzD);
+
+		// tell trajectory file to generate the nn tree from the fiducial surface
+		const BrainModelSurface* bms = getActiveFiducialSurface();
+	   if (bms != NULL)
+	   {
+   	   const CoordinateFile* cf = bms->getCoordinateFile();
+   	   trajectoryFile->createFiducialTree(cf);
+	   }
+	   else
+	   {
+	   	std::cout << "ERROR in readTrajectoryFile - no fiducial surface!" << std::endl;
+	   }
+		trajectoryFile->readFile(name);
+
+
+	}
+
+}
+
+/**
+ * Write the electrode trajectory file.
+ */
+void
+BrainSet::writeTrajectoryFile(const QString& name) throw (FileException)
+{
+	trajectoryFile->writeFile(name);
+}
+
+
+
+
+
 /** 
  * Write the geodesic distance data file.
  */ 
@@ -8848,6 +8907,26 @@ BrainSet::readSpecFile(const SPEC_FILE_READ_MODE specReadMode,
    }
    
    //
+   // Read the trajectory files
+   //
+   for (unsigned int i = 0; i < specFileIn.trajectoryFile.files.size(); i++) {
+      if (specFileIn.trajectoryFile.files[i].selected) {
+         if (updateFileReadProgressDialog(specFileIn.trajectoryFile.files[i].filename,
+                                          progressFileCounter, progressDialog)) {
+            return true;
+         }
+         try {
+            readTrajectoryFile(specFileIn.trajectoryFile.files[i].filename);
+         }
+         catch (FileException& e) {
+            errorMessages.push_back(e.whatQString());
+         }
+      }
+   }
+
+
+
+   //
    // Read the transformation data file
    //
    for (unsigned int i = 0; i < specFileIn.transformationDataFile.files.size(); i++) {
@@ -10591,8 +10670,12 @@ BrainSet::exportByuSurfaceFile(const BrainModelSurface* bms,
       vtkPolyData* polyData = bms->convertToVtkPolyData();
       if (polyData != NULL) {
          vtkBYUWriter *writer = vtkBYUWriter::New();
+#ifdef HAVE_VTK6
+         writer->SetInputData(polyData);
+#else
          writer->SetInput(polyData);
          writer->SetHeader("Written by Caret");
+#endif
          writer->SetGeometryFileName((char*)filename.toAscii().constData());
          writer->Write();
       
@@ -10630,8 +10713,12 @@ BrainSet::exportInventorSurfaceFile(const BrainModelSurface* bms,
          colors->Delete();
       
          vtkIVWriter *writer = vtkIVWriter::New();
+#ifdef HAVE_VTK6
+         writer->SetInputData(polyData);
+#else
          writer->SetInput(polyData);
          writer->SetHeader("Written by Caret");
+#endif
          writer->SetFileName((char*)filename.toAscii().constData());
          writer->Write();
       
@@ -10652,8 +10739,12 @@ BrainSet::exportStlSurfaceFile(const BrainModelSurface* bms,
       vtkPolyData* polyData = bms->convertToVtkPolyData();
       if (polyData != NULL) {
          vtkSTLWriter *writer = vtkSTLWriter::New();
+#ifdef HAVE_VTK6
+         writer->SetInputData(polyData);
+#else
          writer->SetInput(polyData);
          writer->SetHeader("Written by Caret");
+#endif
          writer->SetFileName((char*)filename.toAscii().constData());
          writer->Write();
       
@@ -11052,8 +11143,12 @@ BrainSet::exportVtkSurfaceFile(const BrainModelSurface* bms,
       vtkPolyData* polyData = convertToVtkPolyData(bms, exportColors);
       if (polyData != NULL) {      
          vtkPolyDataWriter *writer = vtkPolyDataWriter::New();
+#ifdef HAVE_VTK6
+         writer->SetInputData(polyData);
+#else
          writer->SetInput(polyData);
          writer->SetHeader("Written by Caret");
+#endif
          writer->SetFileName((char*)filename.toAscii().constData());
          writer->Write();
       
@@ -11075,7 +11170,11 @@ BrainSet::exportVtkXmlSurfaceFile(const BrainModelSurface* bms,
       vtkPolyData* polyData = convertToVtkPolyData(bms, exportColors);
       if (polyData != NULL) {      
          vtkXMLPolyDataWriter *writer = vtkXMLPolyDataWriter::New();
+#ifdef HAVE_VTK6
+         writer->SetInputData(polyData);
+#else
          writer->SetInput(polyData);
+#endif
          writer->SetDataModeToAscii();
          writer->SetFileName((char*)filename.toAscii().constData());
          writer->Write();

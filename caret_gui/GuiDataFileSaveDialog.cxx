@@ -94,6 +94,7 @@
 #include "VectorFile.h"
 #include "TopographyFile.h"
 #include "TopologyFile.h"
+#include "TrajectoryFile.h"
 #include "QtMultipleInputDialog.h"
 #include "QtUtilities.h"
 #include "VocabularyFile.h"
@@ -279,6 +280,7 @@ GuiDataFileSaveDialog::GuiDataFileSaveDialog(QWidget* parent)
    filterNames << FileFilters::getSurfaceShapeFileFilter();
    filterNames << FileFilters::getTopographyFileFilter();
    filterNames << FileFilters::getTopologyGenericFileFilter();
+   filterNames << FileFilters::getTrajectoryFileFilter();
    filterNames << FileFilters::getTransformationMatrixFileFilter();
    filterNames << FileFilters::getVocabularyFileFilter();
    filterNames << FileFilters::getVolumeAnatomyFileFilter();
@@ -2860,6 +2862,10 @@ GuiDataFileSaveDialog::done(int r)
                                   fileName,
                                   SpecFile::getTransformationMatrixFileExtension());
             brainSet->writeTransformationMatrixFile(fileName);
+         }
+         else if (filterName == FileFilters::getTrajectoryFileFilter()) {
+        	 TrajectoryFile* tjf = brainSet->getTrajectoryFile();
+        	 brainSet->writeTrajectoryFile(fileName);
          }
          else if (filterName == FileFilters::getVocabularyFileFilter()) {
             VocabularyFile* vf = brainSet->getVocabularyFile();

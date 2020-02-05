@@ -194,6 +194,9 @@ class GuiFilesModified {
       /// set wustl region has been modified
       void setWustlRegionModified() { wustlRegion = true; }
 
+      /// set trajectory data modified
+      void setTrajectoryModified() { trajectory = true; }
+
       /// set inhibit coordinate file surface default scaling
       void setInhibitSurfaceDefaultScaling() { inhibitDefaultSurfaceScaling = true; }
       
@@ -240,7 +243,7 @@ class GuiFilesModified {
       bool volume;
       bool vtkModel;
       bool wustlRegion;
-      
+      bool trajectory;
       
       bool inhibitDefaultSurfaceScaling;
       friend class GuiMainWindow;

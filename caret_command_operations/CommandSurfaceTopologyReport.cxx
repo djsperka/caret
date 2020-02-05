@@ -106,9 +106,16 @@ CommandSurfaceTopologyReport::executeCommand() throw (BrainModelAlgorithmExcepti
    //
    // Create a brain set
    //
+   // DJS This call apparently relies on a cast of the bool to an empty string?
+   // I am guessing here that the intended constructor is the one with coord file name,
+   // an optional second coord file (which defaults to empty string) and a single bool.
+   // I am guessing that the two bool's originally supplied here were intended to align
+   // with the constructor that has 'bool readAllFilesInSpec' and 'bool primaryBrainSetFlagIn',
+   // and since the one I'm targeting only has ' bool primaryBrainSetFlagIn', we retain the 'true'
+   // arg.
    BrainSet brainSet(topologyFileName,
                      coordinateFileName,
-                     false,
+                     "",
                      true);
    BrainModelSurface* bms = brainSet.getBrainModelSurface(0);
    if (bms == NULL) {

@@ -29,12 +29,23 @@
 
 #include <QString>
 
+#ifdef CARET_BUILDID
+# undef  SHSH
+# undef  SHSHSH
+# undef  CARET_BUILDID_STRING
+# define SHSH(x)   #x
+# define SHSHSH(x) SHSH(x)
+# define CARET_BUILDID_STRING  SHSHSH(CARET_BUILDID)   /* now in "quotes" */
+#else
+# undef  CARET_BUILDID_STRING
+#endif
+
 /// class for caret version information
 class CaretVersion {
    public:
       /// Version 5.65, January 23, 2012
       /// get the version of caret as a QString
-      static QString getCaretVersionAsString() { return "5.66"; }
+      static QString getCaretVersionAsString() { return "5.66" " " CARET_BUILDID_STRING; }
 };
 
 #endif // __CARET_VERSION_H__

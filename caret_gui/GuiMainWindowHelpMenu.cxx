@@ -45,6 +45,8 @@ GuiMainWindowHelpMenu::GuiMainWindowHelpMenu(GuiMainWindow* parent) :
                     helpActions, SLOT(updateActions()));
                     
    addAction(helpActions->getAboutAction());
+
+   addAction(helpActions->getAboutSplashAction());
    
    addAction(helpActions->getAboutQtAction());
 

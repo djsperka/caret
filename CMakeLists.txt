@@ -9,7 +9,7 @@ CMAKE_MINIMUM_REQUIRED (VERSION 2.8)
 #
 MESSAGE("   ")
 MESSAGE("REQUIRED environment variables for VTK:")
-MESSAGE("   VTK_DIR - The directory containing the VTK include and lib directories")
+MESSAGE("   VTK_DIR - The directory containing the VTK include and lib directories:" ${VTK_DIR})
 MESSAGE("   ")
 MESSAGE("OPTIONAL environment variables for MINC and NETCDF:")
 MESSAGE("   MINC_DIR - The directory containing the MINC include and lib directories")
@@ -25,6 +25,13 @@ MESSAGE("   ZLIB_LIB_DIR - The directory containing the ZLIB library")
 MESSAGE("   ")
 MESSAGE("For Qt, the Qt program 'qmake' must be in the PATH")
 MESSAGE("   ")
+
+#=================================================================================
+#
+# Add folder for cmake modules
+#
+set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/CMakeScripts/")
+
 
 #=================================================================================
 #
@@ -78,9 +85,9 @@ if (CMAKE_COMPILER_IS_GNUCC)
     execute_process(COMMAND ${CMAKE_C_COMPILER} -dumpversion
                     OUTPUT_VARIABLE GCC_VERSION)
     string(REGEX MATCHALL "[0-9]+" GCC_VERSION_COMPONENTS ${GCC_VERSION})
-    list(GET GCC_VERSION_COMPONENTS 0 GCC_MAJOR)
-    list(GET GCC_VERSION_COMPONENTS 1 GCC_MINOR)
-    message("gcc major minor version numbers are: "${GCC_MAJOR},${GCC_MINOR})
+#    list(GET GCC_VERSION_COMPONENTS 0 GCC_MAJOR)
+#    list(GET GCC_VERSION_COMPONENTS 1 GCC_MINOR)
+#    message("gcc major minor version numbers are: "${GCC_MAJOR},${GCC_MINOR})
 endif()
 if (CMAKE_COMPILER_IS_GNUCC)
 if(${GCC_VERSION} VERSION_LESS "4.2")
@@ -116,11 +123,16 @@ MESSAGE("QT Libraries: " ${QT_LIBRARIES})
 
 #=================================================================================
 SET (VTK_DIR $ENV{VTK_DIR})
-FIND_PACKAGE(VTK REQUIRED)
+FIND_PACKAGE(VTK REQUIRED NO_MODULE)
 IF (VTK_FOUND)
   MESSAGE("VTK: " ${VTK_INCLUDE_DIRS})
   MESSAGE("VTK: " ${VTK_LIBRARY_DIRS})
   INCLUDE(${VTK_USE_FILE})
+  ADD_DEFINITIONS( -DHAVE_VTK )
+  ADD_DEFINITIONS( -DHAVE_VTK5 )
+  IF (VTK_MAJOR_VERSION EQUAL 6)
+    ADD_DEFINITIONS( -DHAVE_VTK6 )
+  ENDIF (VTK_MAJOR_VERSION EQUAL 6)
 ELSE (VTK_FOUND)
    MESSAGE(FATAL_ERROR "VTK not found, is environment variable VTK_DIR set?")
 ENDIF(VTK_FOUND)
@@ -140,9 +152,8 @@ ENDIF(VTK_FOUND)
 #
 # Flags
 # 
+ADD_DEFINITIONS( -DCARET_BUILDID=${CARET_BUILDID} )
 ADD_DEFINITIONS( -DCARET_FLAG )
-ADD_DEFINITIONS( -DHAVE_VTK )
-ADD_DEFINITIONS( -DHAVE_VTK5 )
 
 #=================================================================================
 #
@@ -276,43 +287,24 @@ ELSE (OPENGL_FOUND)
    MESSAGE(FATAL_ERROR "OpenGL Libraries were not found")
 ENDIF (OPENGL_FOUND)
 
-
 #=================================================================================
-SET (VTK_LIBRARIES
-            -L${VTK_LIBRARY_DIRS}
-            vtkFiltering 
-            vtkGenericFiltering 
-            vtkImaging 
-            vtkGraphics 
-            vtkIO 
-            vtkFiltering 
-            vtkCommon 
-            vtksys 
-            vtkjpeg 
-            vtkpng 
-            vtkexpat 
-            vtkzlib)
+#
+# Need libann - will fail on windows as I've written it. linux only now.
+#
+FIND_PACKAGE(LibANN REQUIRED)
+if (LIBANN_FOUND)
+	INCLUDE_DIRECTORIES(${LIBANN_INCLUDE_DIR})
+endif (LIBANN_FOUND)
 
-#SET (VTK_LIBRARIES
-#            -lvtkFiltering 
-#            -lvtkGenericFiltering 
-#            -lvtkImaging 
-#            -lvtkGraphics 
-#            -lvtkIO 
-#            -lvtkFiltering 
-#            -lvtkCommon 
-#            -lvtksys 
-#            -lvtkjpeg 
-#            -lvtkpng 
-#            -lvtkexpat 
-#            -lvtkzlib)
+
+
 
 #=================================================================================
 #
 # All subdirectories that will be configured for building
 #
 ADD_SUBDIRECTORY ( caret_common )
-ADD_SUBDIRECTORY ( caret_vtk4_classes )
+#ADD_SUBDIRECTORY ( caret_vtk4_classes )
 ADD_SUBDIRECTORY ( caret_uniformize )
 ADD_SUBDIRECTORY ( caret_gifti )
 ADD_SUBDIRECTORY ( caret_files )

@@ -312,7 +312,11 @@ BrainModelContourToSurfaceConverter::execute() throw (BrainModelAlgorithmExcepti
    
    if (DebugControl::getDebugOn()) {
       vtkPolyDataWriter* contourWriter = vtkPolyDataWriter::New();
+#ifdef HAVE_VTK6
+      contourWriter->SetInputData(contours);
+#else
       contourWriter->SetInput(contours);
+#endif
       contourWriter->SetHeader("");
       contourWriter->SetFileName("contours.vtk");
       contourWriter->Write();
@@ -324,7 +328,11 @@ BrainModelContourToSurfaceConverter::execute() throw (BrainModelAlgorithmExcepti
    //
    vtkVoxelContoursToSurfaceFilter *surface = 
                           vtkVoxelContoursToSurfaceFilter::New();
+#ifdef HAVE_VTK6
+   surface->SetInputData(contours);
+#else
    surface->SetInput(contours);
+#endif
    surface->SetMemoryLimitInBytes(1000000000);
    
    //
@@ -332,7 +340,11 @@ BrainModelContourToSurfaceConverter::execute() throw (BrainModelAlgorithmExcepti
    //
    if (DebugControl::getDebugOn()) {
       vtkPolyDataWriter* writer1 = vtkPolyDataWriter::New();
+#ifdef HAVE_VTK6
+      writer1->SetInputConnection(surface->GetOutputPort());
+#else
       writer1->SetInput(surface->GetOutput());
+#endif
       writer1->SetHeader("");
       writer1->SetFileName("raw_surface.vtk");
       writer1->Write();
@@ -344,7 +356,11 @@ BrainModelContourToSurfaceConverter::execute() throw (BrainModelAlgorithmExcepti
    // Make sure mesh is only triangles
    //
    vtkTriangleFilter *triangleFilter = vtkTriangleFilter::New();
+#ifdef HAVE_VTK6
+   triangleFilter->SetInputConnection(surface->GetOutputPort());
+#else
    triangleFilter->SetInput(surface->GetOutput());
+#endif
    triangleFilter->Update();
    
    //
@@ -418,8 +434,11 @@ BrainModelContourToSurfaceConverter::execute() throw (BrainModelAlgorithmExcepti
    if (polygonLimit < numberOfPolygons) {
    
       clean1 = vtkCleanPolyData::New();
+#ifdef HAVE_VTK6
+      clean1->SetInputData(surfaceData);
+#else
       clean1->SetInput(surfaceData);
-      
+#endif
       if (DebugControl::getDebugOn()) {
          std::cout << "Before decimation surface has " << numberOfPolygons
                    << " polygons." << std::endl;
@@ -427,7 +446,11 @@ BrainModelContourToSurfaceConverter::execute() throw (BrainModelAlgorithmExcepti
       const double errorVal = 0.001;
       const double reduction = 1.0 - static_cast<double>(polygonLimit) / static_cast<double>(numberOfPolygons);
       decimater = vtkDecimatePro::New();
+#ifdef HAVE_VTK6
+      decimater->SetInputConnection(clean1->GetOutputPort());
+#else
       decimater->SetInput(clean1->GetOutput());
+#endif
       decimater->SetTargetReduction(reduction); //0.90);
       decimater->PreserveTopologyOn();
       decimater->SetFeatureAngle(180.0); //5); //30);
@@ -441,7 +464,11 @@ BrainModelContourToSurfaceConverter::execute() throw (BrainModelAlgorithmExcepti
       decimater->SetErrorIsAbsolute(1);
       
       vtkCleanPolyData* clean2 = vtkCleanPolyData::New();
+#if HAVE_VTK6
+      clean2->SetInputConnection(decimater->GetOutputPort());
+#else
       clean2->SetInput(decimater->GetOutput());
+#endif
       clean2->Update();
       surfaceData = clean2->GetOutput();
       
@@ -505,7 +532,11 @@ BrainModelContourToSurfaceConverter::execute() throw (BrainModelAlgorithmExcepti
    //
    if (DebugControl::getDebugOn()) {
       vtkPolyDataWriter* writer = vtkPolyDataWriter::New();
+#ifdef HAVE_VTK6
+      writer->SetInputData(surfaceData);
+#else
       writer->SetInput(surfaceData);
+#endif
       writer->SetHeader("");
       writer->SetFileName("surface.vtk");
       writer->Write();

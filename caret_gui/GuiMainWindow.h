@@ -109,6 +109,7 @@ class GuiSmoothingDialog;
 //class GuiSpeechGenerator;
 class GuiStudyCollectionFileEditorDialog;
 class GuiStudyMetaDataFileEditorDialog;
+class GuiTrajectoryToolDialog;
 class GuiTransformationMatrixDialog;
 class GuiVocabularyFileEditorDialog;
 class GuiVolumeBiasCorrectionDialog;
@@ -267,6 +268,9 @@ class GuiMainWindow : public QMainWindow {
       
       /// create, (possibly show), and return the volume region of interest dialog
       GuiVolumeRegionOfInterestDialog* getVolumeRegionOfInterestDialog(const bool showIt);
+
+      GuiTrajectoryToolDialog* getTrajectoryToolDialog(const bool showIt = true);
+
       
       /// create, (possibly show), and return the threshold segmentation dialog
       GuiVolumeThresholdSegmentationDialog* getVolumeThresholdSegmentationDialog(const bool showIt);
@@ -279,7 +283,7 @@ class GuiMainWindow : public QMainWindow {
       
       /// create, (possibly show), and return the interpolate surface dialog
       GuiInterpolateSurfacesDialog* getInterpolateSurfaceDialog(const bool showIt);
-      
+
       /// get the align surface to standard orientation dialog
       GuiAlignSurfaceToStandardOrientationDialog* getAlignSurfaceToStandardOrientationDialog() {
          return alignSurfaceToStandardOrientationDialog;
@@ -429,6 +433,9 @@ class GuiMainWindow : public QMainWindow {
       
       /// display the border color key
       void displayBorderColorKey();
+
+      /// create, (possibly show), and return the electrode trajectory tool dialog
+      void displayTrajectoryToolDialog();
       
       /// display the cell color key
       void displayCellColorKey();
@@ -700,6 +707,9 @@ class GuiMainWindow : public QMainWindow {
       
       /// smoothing dialog
       GuiSmoothingDialog* smoothingDialog;
+
+      /// electrode trajectory tool dialog
+      GuiTrajectoryToolDialog *trajectoryToolDialog;
       
       /// borders create interpolated dialog
       GuiBordersCreateInterpolatedDialog* bordersCreateInterpolatedDialog;

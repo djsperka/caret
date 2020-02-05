@@ -200,6 +200,12 @@ GuiMainWindowVolumeActions::GuiMainWindowVolumeActions(GuiMainWindow* mainWindow
    mathOperationsVolumeAction->setObjectName("mathOperationsVolumeAction");
    QObject::connect(mathOperationsVolumeAction, SIGNAL(triggered(bool)),
                     mainWindowParent, SLOT(displayVolumeMathDialog()));
+
+   trajectoryToolAction = new QAction(mainWindowParent);
+   trajectoryToolAction->setText("Electrode trajectory tool...");
+   trajectoryToolAction->setObjectName("trajectoryToolAction");
+   QObject::connect(trajectoryToolAction, SIGNAL(triggered(bool)),
+                    mainWindowParent, SLOT(displayTrajectoryToolDialog()));
 }
 
 /**

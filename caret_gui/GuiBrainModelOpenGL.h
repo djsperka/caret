@@ -45,7 +45,7 @@ class DisplaySettingsCells;
 class GuiBrainModelOpenGLPopupMenu;
 class GuiBrainSetAndModelSelectionControl;
 class TopologyFile;
-
+class BrainModelSelectedItem;			// djs
 class GuiBrainModelOpenGLKeyEvent;
 class GuiBrainModelOpenGLMouseEvent;
 
@@ -226,6 +226,10 @@ class GuiBrainModelOpenGLMouseEvent;
       
        /// set the displayed brain model
        void setDisplayedBrainModel(const BrainModel* bm);
+       
+       /// Get the currently selected node DJS. 
+       BrainModelOpenGLSelectedItem getSelectedNode() const { return openGL->getSelectedNode(); }
+       
        
        /// Reset the displayed brain models in all windows
        static void setAllDisplayedBrainModelIndices(const int newIndex);
